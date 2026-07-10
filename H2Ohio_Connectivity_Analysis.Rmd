@@ -21,8 +21,8 @@ library(purrr)
 ## Load in Data
 
 ```{r}
-annual_df = read.csv("H2Ohio_2025_annualdf.csv")
-month_df = read.csv("H2Ohio_2025_monthdf.csv")
+annual_df = read.csv("Data/H2Ohio_2025_annualdf.csv")
+month_df = read.csv("Data/H2Ohio_2025_monthdf.csv")
 ```
 
 
