@@ -1,0 +1,43 @@
+---
+title: "H2Ohio_Connectivity_Analysis"
+author: "Kenny Anderson"
+date: "2026-07-10"
+output: html_document
+---
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(readr)
+library(ggpubr)
+library(matrixStats)
+library(scales)
+library(patchwork)
+library(scales)
+library(Metrics)
+```
+
+## Load in Data
+
+```{r}
+annual_df = read.csv("H2Ohio_2025_annualdf.csv")
+month_df = read.csv("H2Ohio_2025_monthdf.csv")
+
+```
+
+
+# Methods
+
+
+# Results
+
+## Figure 1: Map of Projects
+
+## Figure 2: Retention/release vs. volume vs. concentration
+
+## Figure 3: Timing of retention/release
+
+## Figure 4: NEW ANALYSIS; Show when concentration does matter. Modelling??
+
+## Figure 5: NEW ANALYSIS: Show info about releases (timing? volume?)
+
+## Figure 6: Change over time (or lack thereof)
