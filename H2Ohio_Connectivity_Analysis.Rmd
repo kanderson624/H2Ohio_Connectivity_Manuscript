@@ -14,6 +14,8 @@ library(scales)
 library(patchwork)
 library(scales)
 library(Metrics)
+library(purrr)
+
 ```
 
 ## Load in Data
@@ -21,7 +23,6 @@ library(Metrics)
 ```{r}
 annual_df = read.csv("H2Ohio_2025_annualdf.csv")
 month_df = read.csv("H2Ohio_2025_monthdf.csv")
-
 ```
 
 
@@ -30,14 +31,150 @@ month_df = read.csv("H2Ohio_2025_monthdf.csv")
 
 # Results
 
-## Figure 1: Map of Projects
+### Figure 1: Map of Projects
 
-## Figure 2: Retention/release vs. volume vs. concentration
 
-## Figure 3: Timing of retention/release
+## Volume vs. retention relationship
 
-## Figure 4: NEW ANALYSIS; Show when concentration does matter. Modelling??
+### Figure 2: Retention/release vs. volume vs. concentration
+```{r}
+# setup data
+month_df_tp_filt <- month_df %>% filter(tp_filt_lbs >= 0) # separate out filtration (positive values)
+month_df_tp_rel <- month_df %>% filter(tp_filt_lbs < 0) %>% mutate(tp_filt_lbs = abs(tp_filt_lbs)) # separate out release (negative values) and take absolute value
+month_df_tn_filt <- month_df %>% filter(tn_filt_lbs >= 0) # separate out filtration (positive values)
+month_df_tn_rel <- month_df %>%  filter(tn_filt_lbs < 0) %>% mutate(tn_filt_lbs = abs(tn_filt_lbs)) # separate out release (negative values) and take absolute value
 
-## Figure 5: NEW ANALYSIS: Show info about releases (timing? volume?)
+# Make functions
+log_minor_breaks <- function(lims) {
+  min_exp <- floor(log10(lims[1]))
+  max_exp <- ceiling(log10(lims[2]))
+  unlist(lapply(min_exp:max_exp, \(e) (1:9) * 10^e))}
 
-## Figure 6: Change over time (or lack thereof)
+label_log_clean <- function(x) {
+  sapply(x, function(val) {if (is.na(val))
+      return("")
+    exp <- log10(val)
+    if (abs(exp - round(exp)) < 1e-10) {if (val < 1)
+        return(format(val, scientific = FALSE, trim = TRUE))
+      return(scales::comma(val, accuracy = 1))}  
+    "" })}
+
+# set up plot styles 
+
+log_x_scale <- scale_x_log10(name = expression(bold("Inflow volume (m"^3*")")), limits = c(1, 1e6), 
+  breaks = c(1, 10^(-10:10)), minor_breaks = log_minor_breaks, labels = label_log_clean)
+
+log_y_scale <- scale_y_log10(limits = c(1e-4, 1e3), breaks = c(1e-6, 10^(-10:10)),
+  minor_breaks = log_minor_breaks,labels = label_log_clean)
+
+base_theme <- theme_bw() +
+  theme(axis.title = element_text(size = 14, face = "bold"), axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 12))
+
+cor_layer <- stat_cor(method = "pearson", aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+  label.x.npc = 0, label.y.npc = 1, p.accuracy = 0.001)
+
+# Make functions for creating plots
+plot_volume <- function(data, yvar, ylab) {
+  ggplot(data, aes(x = inflow_volume_m3, y = .data[[yvar]])) +
+    geom_point() + geom_smooth(method = lm, color = "black") + log_x_scale +
+    log_y_scale + labs(y = ylab) + annotation_logticks(sides = "bl") + cor_layer + base_theme}
+
+plot_concentration <- function(data, xvar, yvar, xlab, ylab, smooth = FALSE) {
+  p <- ggplot(data, aes( x = .data[[xvar]], y = .data[[yvar]])) +
+    geom_point()
+  if (smooth) {p <- p + geom_smooth(method = lm, color = "black")}
+  p + log_y_scale + labs(x = xlab, y = ylab) + annotation_logticks(sides = "l") + cor_layer + theme_bw() +
+    theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12))}
+
+# Make Plots
+p1 <- plot_volume(month_df_tp_filt, "tp_filt_lbs", "Total Phosphorus Filtration (lbs.)")
+p2 <- plot_volume(month_df_tp_rel, "tp_filt_lbs", "Total Phosphorus Release (lbs.)")
+p3 <- plot_concentration(month_df,"tp_in_mgL","tp_filt_lbs","Total Phosphorus concentration\n(mg/L) at Inflow", "Total Phosphorus Filtration (lbs.)")
+p4 <- plot_volume(month_df_tn_filt, "tn_filt_lbs","Total Nitrogen Filtration (lbs.)")
+p5 <- plot_volume(month_df_tn_rel,"tn_filt_lbs","Total Nitrogen Release (lbs.)")
+p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen concentration\n(mg/L) at Inflow", "Total Nitrogen Filtration (lbs.)", smooth = TRUE)
+
+# Combine into final figure
+fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
+
+```
+### Figure 3: Timing of retention/release
+
+```{r}
+# compile dfs and add seasons
+dfs <- list(month_df_tp_rel  = month_df_tp_rel,
+  month_df_tp_filt = month_df_tp_filt,
+  month_df_tn_rel  = month_df_tn_rel,
+  month_df_tn_filt = month_df_tn_filt)
+
+dfs <- map(dfs, ~ .x %>%
+  mutate(month_num = as.numeric(month), season = case_when(
+      month %in% c(12, 1, 2) ~ "Winter",
+      month %in% 3:5 ~ "Spring",
+      month %in% 6:8 ~ "Summer",
+      month %in% 9:11 ~ "Fall"),
+    season = factor(season,levels = c("Spring", "Summer", "Fall", "Winter"))) %>%
+  arrange(Project, month_num))
+
+# define season colors
+season_colors <- c(
+  Winter = "#A1CAF1",
+  Spring = "#8DB600",
+  Summer = "#F3C300",
+  Fall   = "#882D17")
+
+# define plots: 
+
+make_plot <- function(data, yvar, title) {
+  ggplot(data,aes(x = Project, y = .data[[yvar]], fill = season)) +
+    geom_bar(stat = "identity", position = "fill") +
+    scale_x_discrete(drop = FALSE) +
+    scale_y_continuous(labels = scales::label_percent()) +
+    scale_fill_manual(values = season_colors, name = "Season") +
+    labs(y = "Proportion", title = title, x = NULL) +
+    theme_bw() + theme(legend.title = element_text(size = 12, face = "bold"),
+      axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12),
+      axis.text.x = element_text(angle = 90)) }
+
+# make plots
+p1 <- make_plot(month_df_tp_filt, "tp_filt_lbs", "Proportion of Phosphorus Filtration")
+p2 <- make_plot(month_df_tp_rel, "tp_filt_lbs","Proportion of Phosphorus Release")
+p3 <- make_plot(month_df_tn_filt, "tn_filt_lbs", "Proportion of Nitrogen Filtration")
+p4 <- make_plot(month_df_tn_rel, "tn_filt_lbs", "Proportion of Nitrogen Release")
+
+# Combine together
+fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
+```
+
+### Figure 4: NEW ANALYSIS; Show when concentration does matter. Modelling??
+
+### Figure 5: NEW ANALYSIS: Show info about releases (timing? volume?)
+
+### Figure 6: Change over time (or lack thereof)
+```{r}
+# subset out only projects with 3+ years of data
+long_term = annual_df %>%
+  group_by(Project) %>%
+  filter(n() >= 3)
+
+# set color palette: 
+focals_palette <-c("BROP" = '#0067A5', "BWLK" = '#F38400', "FORB" = '#008856',"LITP" = '#875692', "MAGM" = '#BE0032', "OAKE" = '#F6A600',"OAKW" = '#8DB600', "REDB" = '#B3446C', "SJRE" = '#654522', "SPRC" = '#2B3D26', "TIPC" = '#DCD300')
+
+p1 = ggplot(long_term, aes(x = wateryear, y = tp_effic, color = Project)) +
+  geom_line(linewidth = 1.25) +
+  geom_point(size = 3) +xlab("Water Year")+ ylab("Total Phosphorus Filtration Efficiency")+
+   scale_color_manual(values = focals_palette) +
+  theme_bw() +
+  theme(legend.position = "top")+ theme(legend.title = element_text(size=12, face="bold"), axis.title = element_text(size=14, face="bold"), axis.text = element_text(size=12))
+
+p2 = ggplot(long_term, aes(x = wateryear, y = tn_effic, color = Project)) +
+  geom_line(linewidth = 1.25) +
+  geom_point(size = 3) +xlab("Water Year")+ ylab("Total Nitrogen Filtration Efficiency")+
+   scale_color_manual(values = focals_palette) +
+  theme_bw() +
+  theme(legend.position = "top")+ theme(legend.title = element_text(size=12, face="bold"), axis.title = element_text(size=14, face="bold"), axis.text = element_text(size=12))
+
+fig_6 = (p1 / p2) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
+
+```
