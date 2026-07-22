@@ -261,26 +261,39 @@ project_model_stats
 ```
 
 
-### Figure 5: NEW ANALYSIS: Show info about releases (timing? volume?)
+### Figure 5: NEW ANALYSIS: What leads to nutrient release? 
 
 ```{r}
+###### TP
 # get the number of release events in the df for each month
 month_df_tp_rel %>% dplyr::count(month, sort = FALSE)
-# Make a monthly df with a column for whether there is retention (0) or release (1)
+# Make a monthly df with a column for whether there is TP retention (0) or release (1)
 month_df_counts = month_df %>% mutate(ret_rel_tp = if_else(tp_filt_lbs < 0, 1, 0))
 month_df_counts = month_df_counts %>% mutate(ret_rel_tp_text = if_else(tp_filt_lbs < 0, "release", "retain"))
 # remove all values with 0 inflow volume
 month_df_counts = month_df_counts %>% filter(tp_in_mgL != 0)
-# make a model trying to predict retention or release
+# make a model trying to predict TP retention or release
 m1 <- glm(ret_rel_tp ~ inflow_volume_m3 + tp_in_mgL + month, data = month_df_counts, family = "binomial")
 summary(m1)
+
+###### TN 
+# Make a monthly df with a column for whether there is TP retention (0) or release (1)
+month_df_counts = month_df_counts %>% mutate(ret_rel_tn = if_else(tn_filt_lbs < 0, 1, 0))
+# make a model trying to predict TN retention or release
+m2 <- glm(ret_rel_tn ~ inflow_volume_m3 + tn_in_mgL + month, data = month_df_counts, family = "binomial")
+summary(m2)
 # release is more likely when there are low incoming concentrations
 
+
+###### Plots
 # make a db of predictions and then plot it using ggeffects
 pred <- ggpredict(m1, terms = "tp_in_mgL")
 p1 = ggplot(pred, aes(x = x, y = predicted)) + geom_line(linewidth = 1.2, color = "black") + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +
   labs(x = "TP In (mg/L)", y = "Predicted Probability of Release", title = "Predicted Probability of TP Release vs TP In") + theme_bw()
-fig_5 = p1
+pred <- ggpredict(m2, terms = "tn_in_mgL")
+p2 = ggplot(pred, aes(x = x, y = predicted)) + geom_line(linewidth = 1.2, color = "black") + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +
+  labs(x = "TN In (mg/L)", y = "Predicted Probability of Release", title = "Predicted Probability of TN Release vs TN In") + theme_bw()
+fig_5 = p1 + p2
 fig_5
 ```
 
