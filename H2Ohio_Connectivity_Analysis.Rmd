@@ -72,6 +72,7 @@ loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
 ```
 
 
+
 # Results
 
 ### Nutrient Budget Summary Stats: 
@@ -105,10 +106,11 @@ annual_df %>% summarise(mean_tn_lbs = mean(tn_filt_lbs), sd_tn_lbs = sd(tn_filt_
 ### Figure 1: Map of Projects
 
 
-## Volume vs. retention relationship
-
-
 ### Figure 2: Retention/release vs. volume vs. concentration
+
+#### Volume vs. retention relationship
+
+#### Figure
 ```{r}
 # setup data
 month_df_tp_filt <- month_df %>% filter(tp_filt_lbs >= 0) # separate out filtration (positive values)
@@ -283,7 +285,6 @@ month_df_counts = month_df_counts %>% mutate(ret_rel_tn = if_else(tn_filt_lbs < 
 m2 <- glm(ret_rel_tn ~ inflow_volume_m3 + tn_in_mgL + month, data = month_df_counts, family = "binomial")
 summary(m2)
 # release is more likely when there are low incoming concentrations
-
 
 ###### Plots
 # make a db of predictions and then plot it using ggeffects
