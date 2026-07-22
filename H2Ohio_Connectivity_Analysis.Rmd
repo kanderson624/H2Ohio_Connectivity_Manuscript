@@ -4,6 +4,9 @@ author: "Kenny Anderson"
 date: "2026-07-10"
 output: html_document
 ---
+```{r, setup, include=FALSE}
+options(scipen =999)
+```
 
 ```{r warning=FALSE, message=FALSE}
 library(tidyverse)
@@ -15,7 +18,7 @@ library(patchwork)
 library(scales)
 library(Metrics)
 library(purrr)
-
+library(stringr)
 ```
 
 ## Load in Data
@@ -28,13 +31,81 @@ month_df = read.csv("Data/H2Ohio_2025_monthdf.csv")
 
 # Methods
 
+### Wetland Summary Stats:
+Get some summary stats on wetland hydrology
+```{r}
+loi_df = read.csv("Data/locations_of_interest_20260317.csv")
+char_df = read.csv("Data/project character_20251119.csv")
+
+# List all projects that have budgets
+project_list <- unique(c(annual_df$Project, "MERW")) # add on MERW so we also capture values that don't list the three sub-projects individually
+# subset out projects with budgets from char_df
+char_df_budgets <- char_df %>%  filter(project_code %in% project_list) %>%  distinct(project_code, .keep_all = TRUE) # keep only the first row for each value
+
+# We don't have EFLA and WALC in this db so we'll need to add values on manually. Also no data for UPPB so we'll need to add that too. 
+
+# isolated pools present
+char_df_budgets %>% summarise(n_yes = sum(isolated_pools == "Yes", na.rm = TRUE))
+# number of lake connections
+char_df_budgets %>% summarise(n_yes = sum(direct_coastal_connection == "Yes", na.rm = TRUE))
+# number of stream connections
+char_df_budgets <- char_df %>% filter(project_code %in% project_list) %>%  filter(str_detect(direct_riparian_connection, regex("Yes", ignore_case = TRUE)))
+char_df_budgets %>% distinct(project_code) %>% pull(project_code)
+
+
+# now do the same sorting with the LOI dataset to narrow in on the hydrology section
+# subset out projects with budgets from loi_df that have direct tile inputs
+loi_df_budgets <- loi_df %>%  filter(project_code %in% project_list) %>% filter(str_detect(hydrology, "direct tile input"))
+# tell each project with direct tile inputs: 
+loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
+# subset out projects with budgets from loi_df that have floodplains/lotic influence
+loi_df_budgets <- loi_df %>% filter(project_code %in% project_list) %>%  filter(str_detect(hydrology, regex("floodplain|lotic", ignore_case = TRUE)) | project_code == "EFLA") # manually include EFLA because it doesn't have data in the hydrology column
+# tell each project with floodplains/lotic influence: 
+loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
+
+
+# subset out just pools
+loi_df_budgets <- loi_df %>%  filter(project_code %in% project_list) %>% filter(str_detect(loi_cat_primary, regex("Pool|pool", ignore_case = TRUE)))
+loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
+
+```
+
 
 # Results
+
+### Nutrient Budget Summary Stats: 
+
+```{r}
+# count the number of annual budgets that are positive and negative
+annual_df %>% summarise(n_positive = sum(tp_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tp_filt_lbs <= 0, na.rm = TRUE), n_0 = sum(tp_filt_lbs == 0, na.rm = TRUE))
+annual_df %>% summarise(n_positive = sum(tn_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tn_filt_lbs < 0, na.rm = TRUE), n_0 = sum(tn_filt_lbs == 0, na.rm = TRUE))
+
+annual_df %>% group_by(Project) %>% summarise(n_positive = sum(tp_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tp_filt_lbs <= 0, na.rm = TRUE), n_0 = sum(tp_filt_lbs == 0, na.rm = TRUE))
+annual_df %>% group_by(Project) %>% summarise(n_positive = sum(tn_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tn_filt_lbs <= 0, na.rm = TRUE), n_0 = sum(tn_filt_lbs == 0, na.rm = TRUE))
+
+# count the number of months that are positive and negative
+month_df %>% summarise(n_positive = sum(tp_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tp_filt_lbs < 0, na.rm = TRUE), n_0 = sum(tp_filt_lbs == 0, na.rm = TRUE))
+month_df %>% summarise(n_positive = sum(tn_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tn_filt_lbs < 0, na.rm = TRUE), n_0 = sum(tn_filt_lbs == 0, na.rm = TRUE))
+
+month_df %>% group_by(month) %>% summarise(n_positive = sum(tp_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tp_filt_lbs < 0, na.rm = TRUE), n_0 = sum(tp_filt_lbs == 0, na.rm = TRUE))
+month_df %>% group_by(month) %>% summarise(n_positive = sum(tn_filt_lbs > 0, na.rm = TRUE), n_negative = sum(tn_filt_lbs < 0, na.rm = TRUE), n_0 = sum(tn_filt_lbs == 0, na.rm = TRUE))
+
+# mean and sd of annual retention: 
+annual_df %>% summarise(mean_tp_lbs = mean(tp_filt_lbs), med_tp_lbs = median(tp_filt_lbs),sd_tp_lbs = sd(tp_filt_lbs), max_tp_lbs = max(tp_filt_lbs), min_tp_lbs = min(tp_filt_lbs))
+annual_df %>% summarise(mean_tn_lbs = mean(tn_filt_lbs), med_tn_lbs = median(tn_filt_lbs), sd_tn_lbs = sd(tn_filt_lbs), max_tn_lbs = max(tn_filt_lbs), min_tn_lbs = min(tn_filt_lbs))
+
+# mean and sd of nutrient uptake efficiency: 
+annual_df %>% summarise(mean_tp_effic = mean(tp_effic,na.rm=T), med_tp_effic = median(tp_effic,na.rm=T), sd_tp_effic = sd(tp_effic), max_tp_effic = max(tp_effic), min_tp_effic = min(tp_effic))
+annual_df %>% summarise(mean_tn_lbs = mean(tn_filt_lbs), sd_tn_lbs = sd(tn_filt_lbs), max_tn_lbs = max(tn_filt_lbs), min_tn_lbs = min(tn_filt_lbs))
+
+
+```
 
 ### Figure 1: Map of Projects
 
 
 ## Volume vs. retention relationship
+
 
 ### Figure 2: Retention/release vs. volume vs. concentration
 ```{r}
@@ -100,7 +171,6 @@ fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
 
 ```
 ### Figure 3: Timing of retention/release
-
 ```{r}
 # compile dfs and add seasons
 dfs <- list(month_df_tp_rel  = month_df_tp_rel,
@@ -149,7 +219,54 @@ fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") & the
 
 ### Figure 4: NEW ANALYSIS; Show when concentration does matter. Modelling??
 
+Start with modelling this out. We're going to run a model for each project individually of retention ~ volume + concentration and see which is more important for each one. 
+
+```{r}
+month_df_tp_filt
+
+# replace NAs with 0 when concentrations are not available: 
+month_df_tp_filt <- month_df_tp_filt %>%  mutate(tp_in_mgL = coalesce(tp_in_mgL, 0))
+
+
+project_model_stats <- month_df_tp_filt %>%
+  group_by(Project) %>%
+  group_modify(~{
+
+    mod <- lm(
+      tp_filt_lbs ~ inflow_volume_m3 + tp_in_mgL,
+      data = .x
+    )
+
+    coefs <- summary(mod)$coefficients
+
+    tibble(
+      n = nrow(.x),
+      r2 = summary(mod)$r.squared,
+      inflow_volume_t = if ("inflow_volume_m3" %in% rownames(coefs))
+        coefs["inflow_volume_m3", "t value"] else NA_real_,
+      tp_in_t = if ("tp_in_mgL" %in% rownames(coefs))
+        coefs["tp_in_mgL", "t value"] else NA_real_
+    )
+  }) %>%
+  ungroup()
+
+project_model_stats <- project_model_stats %>% mutate(diff_t = inflow_volume_t - abs(tp_in_t)) # take difference in t values (absolute value for concentration)
+
+
+project_model_stats
+
+
+
+```
+
+
 ### Figure 5: NEW ANALYSIS: Show info about releases (timing? volume?)
+
+```{r}
+month_df_tp_rel %>% dplyr::count(month, sort = FALSE)
+
+month_df_counts = month_df %>% mutate(ret_rel_tp = if_else(tp_filt_lbs < 0, "release", "retain"))
+```
 
 ### Figure 6: Change over time (or lack thereof)
 ```{r}
