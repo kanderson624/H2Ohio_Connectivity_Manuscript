@@ -20,6 +20,15 @@ library(Metrics)
 library(purrr)
 library(stringr)
 library(ggeffects)
+library(ggspatial)  # for map annotations (north arrow, scale bar)
+library(tidyterra)  # for handling and plotting raster data with ggplot2 (e.g., elevation)
+library(pals)       # for color palettes (kelly)
+library(sf)         # required to handle spatial data for maps
+library(maps)       # for map data (e.g., county boundaries)
+library(maptiles)   # for basemaps (e.g., Stamen Terrain)
+library(ggrepel)    # for improved label placement in maps
+library(magick)     # for image manipulation (e.g., adding logos to maps)
+library(tigris)     # for Ohio boundary
 ```
 
 ## Load in Data
@@ -105,6 +114,10 @@ annual_df %>% summarise(mean_tn_lbs = mean(tn_filt_lbs), sd_tn_lbs = sd(tn_filt_
 
 ### Figure 1: Map of Projects
 
+```{r}
+
+
+```
 
 ### Figure 2: Retention/release vs. volume vs. concentration
 
@@ -181,7 +194,7 @@ dfs <- list(month_df_tp_rel  = month_df_tp_rel,
   month_df_tn_rel  = month_df_tn_rel,
   month_df_tn_filt = month_df_tn_filt)
 
-dfs <- map(dfs, ~ .x %>%
+dfs <- purrr::map(dfs, ~ .x %>%
   mutate(month_num = as.numeric(month), season = case_when(
       month %in% c(12, 1, 2) ~ "Winter",
       month %in% 3:5 ~ "Spring",
@@ -189,6 +202,12 @@ dfs <- map(dfs, ~ .x %>%
       month %in% 9:11 ~ "Fall"),
     season = factor(season,levels = c("Spring", "Summer", "Fall", "Winter"))) %>%
   arrange(Project, month_num))
+
+# make sure that we're using the changed versions: 
+month_df_tp_rel  <- dfs$month_df_tp_rel
+month_df_tp_filt <- dfs$month_df_tp_filt
+month_df_tn_rel  <- dfs$month_df_tn_rel
+month_df_tn_filt <- dfs$month_df_tn_filt
 
 # define season colors
 season_colors <- c(
@@ -218,6 +237,7 @@ p4 <- make_plot(month_df_tn_rel, "tn_filt_lbs", "Proportion of Nitrogen Release"
 
 # Combine together
 fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
+fig_3
 ```
 
 ### Figure 4: NEW ANALYSIS; Show when concentration does matter. Modelling??
