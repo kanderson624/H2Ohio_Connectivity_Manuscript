@@ -77,7 +77,6 @@ loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
 # subset out just pools
 loi_df_budgets <- loi_df %>%  filter(project_code %in% project_list) %>% filter(str_detect(loi_cat_primary, regex("Pool|pool", ignore_case = TRUE)))
 loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
-
 ```
 
 
@@ -115,7 +114,63 @@ annual_df %>% summarise(mean_tn_lbs = mean(tn_filt_lbs), sd_tn_lbs = sd(tn_filt_
 ### Figure 1: Map of Projects
 
 ```{r}
+# Make a dataset of just the projects with budgets and the coordinates
+loi_budgets_unique <- loi_df_budgets %>%
+  distinct(project_code, .keep_all = TRUE) %>%
+  mutate(loi_lon = sub("^--", "-", loi_lon)) %>% # take out weird double -
+  select(project_code, loi_lat, loi_lon)
 
+loi_budgets_unique$loi_lon = as.numeric(loi_budgets_unique$loi_lon)
+
+# Download Ohio state boundary
+ohio_sf <- states(cb = TRUE) |> 
+  subset(NAME == "Ohio")
+
+# If project does not have drone imagery, set a
+# bounding box to be centered and add the padding
+tile_bbox <- st_as_sfc(st_bbox(ohio_sf, crs = st_crs(4326)))
+
+# Get tiles using maptiles library
+# Zoom value has been adjusted from the original maps
+# that used ggmap/get_map instead of maptiles library
+tile <- get_tiles(tile_bbox, provider = "Esri.WorldGrayCanvas", zoom = 10)
+
+# Fetch all US county spatial data
+ohio_counties <- counties(state = "OH", cb = TRUE, class = "sf")
+
+# (Optional but recommended) Transform to a projected coordinate system 
+# that flattens the earth properly for Ohio (e.g., Ohio North/South 3734/3735)
+ohio_counties_projected <- st_transform(ohio_counties, crs = 4326) 
+
+# Build baseline plot
+wy25_map <- 
+  ggplot() +
+    geom_spatraster_rgb(data = tile, alpha = 1) +
+    geom_sf(data = ohio_sf, fill = NA, color = "black", linewidth = 0.5) +
+    geom_sf(data = ohio_counties_projected, fill = NA, color = "gray60", linewidth = 0.5) +
+    geom_point(data = loi_budgets_unique,
+               aes(x = loi_lon, y = loi_lat), shape = 23,, fill = "gray30",
+               stroke = 0.8, size = 3, show.legend = TRUE) +
+    scale_fill_manual(name = "Monitored Projects\nin Water Year 2025") +
+  geom_text_repel(data = loi_budgets_unique, aes(x = loi_lon, y = loi_lat, label = project_code), size = 3,
+  box.padding = 0.3,point.padding = 0.2,max.overlaps = Inf)+
+  theme_bw() + theme(axis.title = element_blank(), axis.text = element_blank(),legend.position = "top",
+                     legend.title= element_text(size = 14, face = "bold"),
+                     legend.text= element_text(size = 14)) + guides(fill = guide_legend(override.aes = list(size = 4))) +
+    # Add scale bar to top-left corner
+    annotation_scale(location = "bl", text_face = "bold", line_width = 2, text_cex = 1,
+                     width_hint = 0.25, text_col = "black", line_col = "black",
+                     pad_x = unit(0.015, "npc"), pad_y = unit(0.015, "npc"), style = "ticks") +
+    # Add north arrow to top-righ corner
+    annotation_north_arrow(
+      location = "br", which_north = "true",
+      pad_x = unit(0, "npc"), pad_y = unit(0.015, "npc"),
+      style = north_arrow_fancy_orienteering(
+        fill = c("black", "black"),
+        line_col = NA,
+        text_col = "black")) +
+    coord_sf(expand = FALSE)
+wy25_map  
 
 ```
 
