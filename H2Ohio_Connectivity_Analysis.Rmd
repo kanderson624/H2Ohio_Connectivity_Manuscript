@@ -178,7 +178,7 @@ wy25_map
 
 #### Volume vs. retention relationship
 
-#### Figure
+#### Monthly Relationships
 ```{r}
 # setup data
 month_df_tp_filt <- month_df %>% filter(tp_filt_lbs >= 0) # separate out filtration (positive values)
@@ -239,8 +239,62 @@ p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen conc
 
 # Combine into final figure
 fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
+```
+
+#### Leave one out analysis
+```{r}
+# now we replace all the -inf values we get for dividing by 0 with 0
+loo_df <- month_df_tp_filt %>% mutate(across(c(loginflow,logtpfilt), ~ ifelse(is.infinite(.) & . < 0, NA, .)))
+
+# remove rows with NA so we can calculate RMSE without R being angry at us: 
+loo_df <- na.omit(loo_df)
+
+loo_mod <- lm(logtpfilt ~ loginflow, data = loo_df)
+summary(loo_mod)
+
+projects <- unique(loo_df$Project) #List of unique partners
+#Function to run BRT with each partner excluded and store in loo.rmse vector 
+
+loo.rmsesub <- rep(NA, length(projects))
+loo.rmseout <- rep(NA, length(projects))
+loo.adr2 <- rep(NA, length(projects))
+drp_tp <- rep(NA, length(projects))
+
+results <- data.frame(project = character(),rmse_model = numeric(), rmse_removed = numeric(), adj_r2 = numeric(), tp_drp_ratio = numeric(), stringsAsFactors = FALSE)
+
+for(i in 1:length(projects)) {
+  subdata <- loo_df[!(loo_df$Project %in% projects[i]),]
+  outdata <- loo_df[(loo_df$Project %in% projects[i]),]
+
+  loo_mod <- lm(logtpfilt ~ loginflow, data = subdata)
+  
+  predicted <- predict(loo_mod, newdata = subdata)
+  loo.rmsesub[i] <- rmse(subdata$logtpfilt, predict(loo_mod, newdata=subdata))
+  loo.rmseout[i] <- rmse(outdata$logtpfilt, predict(loo_mod, newdata=outdata))
+  loo.adr2[i] <- summary(loo_mod)$adj.r.squared
+  results <- data.frame(project = projects, rmse_model = loo.rmsesub, rmse_removed = loo.rmseout, adj_r2 = loo.adr2,    tp_drp_ratio = drp_tp)
+
+  print(paste("Step", i, "Project:", projects[i], "RMSE M:", loo.rmsesub[i],"RMSE R:", loo.rmseout[i],  "R2:", loo.adr2[i], "TP:DRP R:", drp_tp[i]))
+}
+
+summary(loo.rmsesub) #Mean RMSE across all projects is 3 lbs/month
+10^mean(loo.rmsesub)
+summary(loo.rmseout) #Mean RMSE across all projects is 3 lbs/month
+10^mean(loo.rmseout)
+10^max(loo.rmseout)
+10^min(loo.rmseout)
+
+p_RMSEmodel<-ggplot(data=results, aes(x=project, y=rmse_model)) +
+  geom_bar(stat="identity")+theme_bw()+theme(axis.text.x = element_text(angle=90))+ ylab("RMSE of model with site removed (log TP Filtration (lbs))") + xlab("Project Code")
+
+p_RMSEremoved <- ggplot(data = results, aes(x = project, y = rmse_removed)) +
+  geom_bar(stat = "identity")  + theme_bw() +  theme(axis.text.x = element_text(angle = 90)) +
+  ylab("RMSE of model on removed site (log TP Filtration (lbs))") + xlab("Project Code")
+
+ggarrange(p_RMSEmodel,p_RMSEremoved, nrow=1) # save with dimensions 12 inches x 5 inches for a good size
 
 ```
+
 ### Figure 3: Timing of retention/release
 ```{r}
 # compile dfs and add seasons
@@ -400,3 +454,16 @@ p2 = ggplot(long_term, aes(x = wateryear, y = tn_effic, color = Project)) +
 fig_6 = (p1 / p2) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
 
 ```
+
+### Table 4: Annual retention model
+
+```{r}
+# add in mean SPSC
+
+# add in veg data where available
+
+# 
+
+
+```
+
