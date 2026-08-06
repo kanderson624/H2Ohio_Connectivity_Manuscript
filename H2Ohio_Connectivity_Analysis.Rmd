@@ -17,6 +17,7 @@ library(scales)
 library(patchwork)
 library(scales)
 library(Metrics)
+library(rlang)
 library(purrr)
 library(stringr)
 library(ggeffects)
@@ -36,6 +37,11 @@ library(tigris)     # for Ohio boundary
 ```{r}
 annual_df = read.csv("Data/H2Ohio_2025_annualdf.csv")
 month_df = read.csv("Data/H2Ohio_2025_monthdf.csv")
+
+# calculate log values: 
+month_df = month_df %>%
+  mutate(loginflow = log10(inflow_volume_m3), logtpfilt = log10(tp_filt_lbs), logtpin = log10(tp_in_lbs), logtnfilt = log10(tn_filt_lbs), logdrpfilt = log10(drp_filt_lbs), lognoxfilt = log10(nox_filt_lbs), lognh3filt = log10(nh3_filt_lbs))
+
 ```
 
 
@@ -78,8 +84,6 @@ loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
 loi_df_budgets <- loi_df %>%  filter(project_code %in% project_list) %>% filter(str_detect(loi_cat_primary, regex("Pool|pool", ignore_case = TRUE)))
 loi_df_budgets %>% distinct(project_code) %>% pull(project_code)
 ```
-
-
 
 # Results
 
@@ -243,56 +247,126 @@ fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
 
 #### Leave one out analysis
 ```{r}
-# now we replace all the -inf values we get for dividing by 0 with 0
-loo_df <- month_df_tp_filt %>% mutate(across(c(loginflow,logtpfilt), ~ ifelse(is.infinite(.) & . < 0, NA, .)))
+# setup dfs for dissolved nutrient filtration
+month_df_drp_filt <- month_df %>% filter(drp_filt_lbs >= 0) # separate out filtration (positive values)
+month_df_nox_filt <- month_df %>% filter(nox_filt_lbs >= 0) # separate out filtration (positive values)
+month_df_nh3_filt <- month_df %>% filter(nh3_filt_lbs >= 0) # separate out filtration (positive values)
 
-# remove rows with NA so we can calculate RMSE without R being angry at us: 
-loo_df <- na.omit(loo_df)
+# make a function to run our LOO analysis for a specific variable: 
+run_loo <- function(df, response_var, predictor_var = "loginflow") {
 
-loo_mod <- lm(logtpfilt ~ loginflow, data = loo_df)
-summary(loo_mod)
+  # Replace -Inf with NA in the variables being modeled
+  loo_df <- df %>%
+    mutate(across(
+      all_of(c(response_var, predictor_var)),
+      ~ ifelse(is.infinite(.) & . < 0, NA, .)
+    )) %>%
+    na.omit()
 
-projects <- unique(loo_df$Project) #List of unique partners
-#Function to run BRT with each partner excluded and store in loo.rmse vector 
+  projects <- unique(loo_df$Project)
 
-loo.rmsesub <- rep(NA, length(projects))
-loo.rmseout <- rep(NA, length(projects))
-loo.adr2 <- rep(NA, length(projects))
-drp_tp <- rep(NA, length(projects))
+  loo.rmsesub <- rep(NA, length(projects))
+  loo.rmseout <- rep(NA, length(projects))
+  loo.adr2 <- rep(NA, length(projects))
 
-results <- data.frame(project = character(),rmse_model = numeric(), rmse_removed = numeric(), adj_r2 = numeric(), tp_drp_ratio = numeric(), stringsAsFactors = FALSE)
+  # Build model formula dynamically
+  model_formula <- as.formula(
+    paste(response_var, "~", predictor_var)
+  )
 
-for(i in 1:length(projects)) {
-  subdata <- loo_df[!(loo_df$Project %in% projects[i]),]
-  outdata <- loo_df[(loo_df$Project %in% projects[i]),]
+  for(i in seq_along(projects)) {
 
-  loo_mod <- lm(logtpfilt ~ loginflow, data = subdata)
-  
-  predicted <- predict(loo_mod, newdata = subdata)
-  loo.rmsesub[i] <- rmse(subdata$logtpfilt, predict(loo_mod, newdata=subdata))
-  loo.rmseout[i] <- rmse(outdata$logtpfilt, predict(loo_mod, newdata=outdata))
-  loo.adr2[i] <- summary(loo_mod)$adj.r.squared
-  results <- data.frame(project = projects, rmse_model = loo.rmsesub, rmse_removed = loo.rmseout, adj_r2 = loo.adr2,    tp_drp_ratio = drp_tp)
+    subdata <- loo_df[!(loo_df$Project %in% projects[i]), ]
+    outdata <- loo_df[(loo_df$Project %in% projects[i]), ]
 
-  print(paste("Step", i, "Project:", projects[i], "RMSE M:", loo.rmsesub[i],"RMSE R:", loo.rmseout[i],  "R2:", loo.adr2[i], "TP:DRP R:", drp_tp[i]))
+    loo_mod <- lm(model_formula, data = subdata)
+
+    loo.rmsesub[i] <- rmse(
+      subdata[[response_var]],
+      predict(loo_mod, newdata = subdata)
+    )
+
+    loo.rmseout[i] <- rmse(
+      outdata[[response_var]],
+      predict(loo_mod, newdata = outdata)
+    )
+
+    loo.adr2[i] <- summary(loo_mod)$adj.r.squared
+
+    print(
+      paste(
+        "Step", i,
+        "Project:", projects[i],
+        "RMSE M:", round(loo.rmsesub[i], 4),
+        "RMSE R:", round(loo.rmseout[i], 4),
+        "R2:", round(loo.adr2[i], 4)
+      )
+    )
+  }
+
+  results <- data.frame(
+    project = projects,
+    response = response_var,
+    rmse_model = loo.rmsesub,
+    rmse_removed = loo.rmseout,
+    adj_r2 = loo.adr2
+  )
+
+  return(results)
 }
 
-summary(loo.rmsesub) #Mean RMSE across all projects is 3 lbs/month
-10^mean(loo.rmsesub)
-summary(loo.rmseout) #Mean RMSE across all projects is 3 lbs/month
-10^mean(loo.rmseout)
-10^max(loo.rmseout)
-10^min(loo.rmseout)
+# run all our variables
+tp_results <- run_loo(month_df_tp_filt, "logtpfilt")
+tn_results <- run_loo(month_df_tn_filt, "logtnfilt")
+drp_results <- run_loo(month_df_drp_filt, "logdrpfilt")
+nox_results <- run_loo(month_df_nox_filt, "lognoxfilt")
+nh3_results <- run_loo(month_df_nh3_filt, "lognh3filt")
 
-p_RMSEmodel<-ggplot(data=results, aes(x=project, y=rmse_model)) +
-  geom_bar(stat="identity")+theme_bw()+theme(axis.text.x = element_text(angle=90))+ ylab("RMSE of model with site removed (log TP Filtration (lbs))") + xlab("Project Code")
+# un-log to get the RMSE for each variation for both the version with the full data included and removed
+10^mean(tp_results$rmse_model)
+10^mean(tp_results$rmse_removed)
+10^mean(tn_results$rmse_model)
+10^mean(tn_results$rmse_removed)
+10^mean(drp_results$rmse_model)
+10^mean(drp_results$rmse_removed)
+10^mean(nox_results$rmse_model)
+10^mean(nox_results$rmse_removed)
+10^mean(nh3_results$rmse_model)
+10^mean(nh3_results$rmse_removed)
 
-p_RMSEremoved <- ggplot(data = results, aes(x = project, y = rmse_removed)) +
-  geom_bar(stat = "identity")  + theme_bw() +  theme(axis.text.x = element_text(angle = 90)) +
-  ylab("RMSE of model on removed site (log TP Filtration (lbs))") + xlab("Project Code")
 
-ggarrange(p_RMSEmodel,p_RMSEremoved, nrow=1) # save with dimensions 12 inches x 5 inches for a good size
 
+loo_plots <- function(results, nutrient) {
+
+  p_model <- ggplot(results, aes(x = project, y = rmse_model)) +
+    geom_bar(stat = "identity") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    ylab(paste("RMSE of model with site removed (log", nutrient, "Filtration (lbs))")) +
+    xlab("Project Code")
+
+  p_removed <- ggplot(results, aes(x = project, y = rmse_removed)) +
+    geom_bar(stat = "identity") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90)) +
+    ylab(paste("RMSE of model on removed site (log", nutrient, "Filtration (lbs))")) +
+    xlab("Project Code")
+
+  list(model = p_model, removed = p_removed)
+}
+
+tp_plots  <- loo_plots(tp_results,  "TP")
+tn_plots  <- loo_plots(tn_results,  "TN")
+drp_plots <- loo_plots(drp_results, "DRP")
+nox_plots <- loo_plots(nox_results, "NOx")
+nh3_plots <- loo_plots(nh3_results, "NH3")
+
+figure_s1 <- ((tp_plots$model + tp_plots$removed) /
+ (tn_plots$model + tn_plots$removed) /
+ (nox_plots$model + nox_plots$removed) /
+ (drp_plots$model + drp_plots$removed) /
+ (nh3_plots$model + nh3_plots$removed)) +
+  plot_annotation(title = "Leave-One-Site-Out RMSE Results", subtitle = "Model RMSE and Removed Site RMSE by Nutrient")
 ```
 
 ### Figure 3: Timing of retention/release
@@ -354,43 +428,80 @@ fig_3
 Start with modelling this out. We're going to run a model for each project individually of retention ~ volume + concentration and see which is more important for each one. 
 
 ```{r}
-month_df_tp_filt
+# run a model for each individual site and take the r2, and t values for concentration and volume and put in a df
+get_project_model_stats <- function(df, response_var, concentration_var,volume_var = "inflow_volume_m3") {
+  # Replace NAs in concentration variable with 0
+  df <- df %>% mutate(!!concentration_var := coalesce(.data[[concentration_var]], 0))
 
-# replace NAs with 0 when concentrations are not available: 
-month_df_tp_filt <- month_df_tp_filt %>%  mutate(tp_in_mgL = coalesce(tp_in_mgL, 0))
+  df %>%
+    group_by(Project) %>%
+    group_modify(~{ form <- as.formula(paste(response_var, "~", volume_var, "+", concentration_var))
 
+      mod <- lm(form, data = .x)
+      coefs <- summary(mod)$coefficients
 
-project_model_stats <- month_df_tp_filt %>%
-  group_by(Project) %>%
-  group_modify(~{
+      tibble(n = nrow(.x), r2 = summary(mod)$r.squared,
+        inflow_volume_t = if (volume_var %in% rownames(coefs))
+            coefs[volume_var, "t value"]
+          else NA_real_, concentration_t = if (concentration_var %in% rownames(coefs))
+            coefs[concentration_var, "t value"]
+          else NA_real_ )}) %>%  ungroup()
+}
 
-    mod <- lm(
-      tp_filt_lbs ~ inflow_volume_m3 + tp_in_mgL,
-      data = .x
-    )
-
-    coefs <- summary(mod)$coefficients
-
-    tibble(
-      n = nrow(.x),
-      r2 = summary(mod)$r.squared,
-      inflow_volume_t = if ("inflow_volume_m3" %in% rownames(coefs))
-        coefs["inflow_volume_m3", "t value"] else NA_real_,
-      tp_in_t = if ("tp_in_mgL" %in% rownames(coefs))
-        coefs["tp_in_mgL", "t value"] else NA_real_
-    )
-  }) %>%
-  ungroup()
-
-project_model_stats <- project_model_stats %>% mutate(diff_t = inflow_volume_t - abs(tp_in_t)) # take difference in t values (absolute value for concentration)
-
-
-project_model_stats
-
-
+# run for all the different nutrients
+tp_stats <- get_project_model_stats(month_df_tp_filt, response_var = "tp_filt_lbs", concentration_var = "tp_in_mgL")
+tn_stats <- get_project_model_stats(month_df_tn_filt, response_var = "tn_filt_lbs", concentration_var = "tn_in_mgL")
+drp_stats <- get_project_model_stats(month_df_drp_filt, response_var = "drp_filt_lbs", concentration_var = "drp_in_mgL")
+nox_stats <- get_project_model_stats(month_df_nox_filt, response_var = "nox_filt_lbs", concentration_var = "nox_in_mgL")
+nh3_stats <- get_project_model_stats(month_df_nh3_filt, response_var = "nh3_filt_lbs", concentration_var = "nh3_in_mgL")
 
 ```
+#### Heatmap figure
+```{r}
+# remove models that don't fit right because there's not enough data
+tp_stats = tp_stats %>% mutate(inflow_volume_t = if_else(Project == "MERW1", NA, inflow_volume_t))
+tn_stats = tn_stats %>% mutate(inflow_volume_t = if_else(Project == "MERW1", NA, inflow_volume_t))
+nh3_stats = nh3_stats %>% mutate(inflow_volume_t = if_else(Project %in% c("MERW1", "MERW2","MONW"), NA, inflow_volume_t))
+nox_stats = nox_stats %>% mutate(inflow_volume_t = if_else(Project %in% c("MERW1", "MERW2"), NA, inflow_volume_t))
 
+
+# pivot the df longer to setup for plotting
+tp_stats_long <- tp_stats %>%  pivot_longer(cols = ends_with("_t"), names_to = "variable", names_pattern = "(.*)_t", values_to = "t_value")
+tn_stats_long <- tn_stats %>%  pivot_longer(cols = ends_with("_t"), names_to = "variable", names_pattern = "(.*)_t", values_to = "t_value")
+drp_stats_long <- drp_stats %>%  pivot_longer(cols = ends_with("_t"), names_to = "variable", names_pattern = "(.*)_t", values_to = "t_value")
+nox_stats_long <- nox_stats %>%  pivot_longer(cols = ends_with("_t"), names_to = "variable", names_pattern = "(.*)_t", values_to = "t_value")
+nh3_stats_long <- nh3_stats %>%  pivot_longer(cols = ends_with("_t"), names_to = "variable", names_pattern = "(.*)_t", values_to = "t_value")
+
+# calculate absolute value because negative t values are just as meaningful as positive
+tp_stats_long$abs_t_value = abs(tp_stats_long$t_value)
+tn_stats_long$abs_t_value = abs(tn_stats_long$t_value)
+drp_stats_long$abs_t_value = abs(drp_stats_long$t_value)
+nox_stats_long$abs_t_value = abs(nox_stats_long$t_value)
+nh3_stats_long$abs_t_value = abs(nh3_stats_long$t_value)
+
+
+
+# make the plot
+p1 <- ggplot(tp_stats_long, aes(Project, variable, fill = abs_t_value)) +
+  geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Total Phosphorus")
+p2 <- ggplot(tn_stats_long, aes(Project, variable, fill = abs_t_value)) +
+  geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Total Nitrogen")
+p3 <- ggplot(drp_stats_long, aes(Project, variable, fill = abs_t_value)) +
+  geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Dissolved Reactive Phosphorus")
+p4 <- ggplot(nox_stats_long, aes(Project, variable, fill = abs_t_value)) +
+  geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("NoX")
+p5 <- ggplot(nh3_stats_long, aes(Project, variable, fill = abs_t_value)) +
+  geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Ammonium")
+
+fig_4 = (p1 / p2 / p3 / p4/ p5) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
+fig_4
+
+```
 
 ### Figure 5: NEW ANALYSIS: What leads to nutrient release? 
 
