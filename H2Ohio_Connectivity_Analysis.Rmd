@@ -4,6 +4,8 @@ author: "Kenny Anderson"
 date: "2026-07-10"
 output: html_document
 ---
+
+## Setup
 ```{r, setup, include=FALSE}
 options(scipen =999)
 ```
@@ -423,7 +425,7 @@ fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") & the
 fig_3
 ```
 
-### Figure 4: NEW ANALYSIS; Show when concentration does matter. Modelling??
+### Figure 4: When concentration does matter
 
 Start with modelling this out. We're going to run a model for each project individually of retention ~ volume + concentration and see which is more important for each one. 
 
@@ -503,7 +505,7 @@ fig_4
 
 ```
 
-### Figure 5: NEW ANALYSIS: What leads to nutrient release? 
+### Figure 5: What leads to nutrient release? 
 
 ```{r}
 ###### TP
@@ -538,6 +540,29 @@ fig_5 = p1 + p2
 fig_5
 ```
 
+####Summary Stats to back on model
+
+```{r}
+# mean TP concentration in during release
+month_df_counts %>% filter(ret_rel_tp == 1) %>% summarise(mean_tp = mean(tp_in_mgL, na.rm = T), sd_tp = sd(tp_in_mgL, na.rm = T), max_tp = max(tp_in_mgL, na.rm = T), min_tp = min(tp_in_mgL, na.rm = T))
+# mean TP concentration in during retention
+month_df_counts %>% filter(ret_rel_tp == 0) %>% summarise(mean_tp = mean(tp_in_mgL, na.rm = T), sd_tp = sd(tp_in_mgL, na.rm = T), max_tp = max(tp_in_mgL, na.rm = T), min_tp = min(tp_in_mgL, na.rm = T))
+
+# ttest
+t.test(tp_in_mgL ~ ret_rel_tp, data = month_df_counts)
+
+
+# mean TN concentration in during release
+month_df_counts %>% filter(ret_rel_tn == 1) %>% summarise(mean_tn = mean(tn_in_mgL, na.rm = T), sd_tp = sd(tn_in_mgL, na.rm = T), max_tn = max(tn_in_mgL, na.rm = T), min_tn = min(tn_in_mgL, na.rm = T))
+# mean TN concentration in during retention
+month_df_counts %>% filter(ret_rel_tn == 0) %>% summarise(mean_tn = mean(tn_in_mgL, na.rm = T), sd_tp = sd(tn_in_mgL, na.rm = T), max_tn = max(tn_in_mgL, na.rm = T), min_tn = min(tn_in_mgL, na.rm = T))
+
+# ttest
+t.test(tn_in_mgL ~ ret_rel_tn, data = month_df_counts)
+
+
+```
+
 ### Figure 6: Change over time (or lack thereof)
 ```{r}
 # subset out only projects with 3+ years of data
@@ -566,14 +591,9 @@ fig_6 = (p1 / p2) + plot_layout(heights = 1, guides = "collect") & theme(legend.
 
 ```
 
-### Table 4: Annual retention model
 
 ```{r}
-# add in mean SPSC
 
-# add in veg data where available
-
-# 
 
 
 ```
