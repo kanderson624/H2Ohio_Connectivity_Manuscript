@@ -589,14 +589,42 @@ p2 = ggplot(long_term, aes(x = wateryear, y = tn_effic, color = Project)) +
   theme_bw() +
   theme(legend.position = "top")+ theme(legend.title = element_text(size=12, face="bold"), axis.title = element_text(size=14, face="bold"), axis.text = element_text(size=12))
 
+
+# now total filtration
+p3 = ggplot(long_term, aes(x = wateryear, y = tp_filt_lbs, color = Project)) +
+  geom_line(linewidth = 1.25) +
+  geom_point(size = 3) +xlab("Water Year")+ ylab("Total Phosphorus Filtration")+
+   scale_color_manual(values = focals_palette) +
+  theme_bw() +
+  theme(legend.position = "top")+ theme(legend.title = element_text(size=12, face="bold"), axis.title = element_text(size=14, face="bold"), axis.text = element_text(size=12))
+
+p4 = ggplot(long_term, aes(x = wateryear, y = tn_filt_lbs, color = Project)) +
+  geom_line(linewidth = 1.25) +
+  geom_point(size = 3) +xlab("Water Year")+ ylab("Total Nitrogen Filtration")+
+   scale_color_manual(values = focals_palette) +
+  theme_bw() +
+  theme(legend.position = "top")+ theme(legend.title = element_text(size=12, face="bold"), axis.title = element_text(size=14, face="bold"), axis.text = element_text(size=12))
+
 fig_6 = (p1 / p2) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
+fig_SX = (p3 / p4) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
 
 ```
 
+Now make some summary stats: 
 
 ```{r}
+# mean annual retention
+long_term %>% group_by(wateryear) %>%  summarise(n = n(), mean = mean(inflow_volume_m3, na.rm = TRUE),sd = sd(inflow_volume_m3, na.rm = TRUE))
 
-
+# tp trend over time tp retention
+summary(lm(data=long_term, tp_filt_lbs~wateryear*Project))
+# tn trend over time tn retention
+summary(lm(data=long_term, tn_filt_lbs~wateryear*Project))
+# tp trend over time tp efficiency
+summary(lm(data=long_term, tp_effic~wateryear*Project))
+# tn trend over time tn efficiency
+summary(lm(data=long_term, tn_effic~wateryear*Project))
 
 ```
+
 
