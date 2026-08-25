@@ -39,6 +39,7 @@ library(tigris)     # for Ohio boundary
 ```{r}
 annual_df = read.csv("Data/H2Ohio_2025_annualdf.csv")
 month_df = read.csv("Data/H2Ohio_2025_monthdf.csv")
+runoff_df = read.csv("Data/H2Ohio_2025_runoff_prevention.csv")
 
 # calculate log values: 
 month_df = month_df %>%
@@ -236,12 +237,12 @@ plot_concentration <- function(data, xvar, yvar, xlab, ylab, smooth = FALSE) {
     theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12))}
 
 # Make Plots
-p1 <- plot_volume(month_df_tp_filt, "tp_filt_lbs", "Total Phosphorus Filtration (lbs.)")
+p1 <- plot_volume(month_df_tp_filt, "tp_filt_lbs", "Total Phosphorus Retention (lbs.)")
 p2 <- plot_volume(month_df_tp_rel, "tp_filt_lbs", "Total Phosphorus Release (lbs.)")
-p3 <- plot_concentration(month_df,"tp_in_mgL","tp_filt_lbs","Total Phosphorus concentration\n(mg/L) at Inflow", "Total Phosphorus Filtration (lbs.)")
-p4 <- plot_volume(month_df_tn_filt, "tn_filt_lbs","Total Nitrogen Filtration (lbs.)")
+p3 <- plot_concentration(month_df,"tp_in_mgL","tp_filt_lbs","Total Phosphorus concentration\n(mg/L) at Inflow", "Total Phosphorus Retention (lbs.)")
+p4 <- plot_volume(month_df_tn_filt, "tn_filt_lbs","Total Nitrogen Retention (lbs.)")
 p5 <- plot_volume(month_df_tn_rel,"tn_filt_lbs","Total Nitrogen Release (lbs.)")
-p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen concentration\n(mg/L) at Inflow", "Total Nitrogen Filtration (lbs.)", smooth = TRUE)
+p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen concentration\n(mg/L) at Inflow", "Total Nitrogen Retention (lbs.)", smooth = TRUE)
 
 # Combine into final figure
 fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
@@ -344,14 +345,14 @@ loo_plots <- function(results, nutrient) {
     geom_bar(stat = "identity") +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90)) +
-    ylab(paste("RMSE of model with site removed (log", nutrient, "Filtration (lbs))")) +
+    ylab(paste("RMSE of model with site removed (log", nutrient, "Retention (lbs))")) +
     xlab("Project Code")
 
   p_removed <- ggplot(results, aes(x = project, y = rmse_removed)) +
     geom_bar(stat = "identity") +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90)) +
-    ylab(paste("RMSE of model on removed site (log", nutrient, "Filtration (lbs))")) +
+    ylab(paste("RMSE of model on removed site (log", nutrient, "Retention (lbs))")) +
     xlab("Project Code")
 
   list(model = p_model, removed = p_removed)
@@ -362,13 +363,21 @@ tn_plots  <- loo_plots(tn_results,  "TN")
 drp_plots <- loo_plots(drp_results, "DRP")
 nox_plots <- loo_plots(nox_results, "NOx")
 nh3_plots <- loo_plots(nh3_results, "NH3")
-
-figure_s1 <- ((tp_plots$model + tp_plots$removed) /
+```
+### Figure S1. LOO analysis
+```{r}
+figure_s1_alt <- ((tp_plots$model + tp_plots$removed) /
  (tn_plots$model + tn_plots$removed) /
  (nox_plots$model + nox_plots$removed) /
  (drp_plots$model + drp_plots$removed) /
  (nh3_plots$model + nh3_plots$removed)) +
   plot_annotation(title = "Leave-One-Site-Out RMSE Results", subtitle = "Model RMSE and Removed Site RMSE by Nutrient")
+
+figure_s1 <- ((tp_plots$model + tp_plots$removed) /
+ (tn_plots$model + tn_plots$removed))
+
+
+
 ```
 
 ### Figure 3: Timing of retention/release
@@ -676,81 +685,78 @@ exec_sum_table
 ```
 
 
+### Table 2: Nutrient Retention Summary table
+
+Calculate the percent P retention during the HAB season
 ```{r}
-# filtration in lbs/acre (we're using in_lbs to select the different column prefixes (the nutrients) we're using)
-annual_df_alt <- annual_df %>%
-  mutate(across(.cols = ends_with("_in_lbs"), .fns = ~ get(str_replace(cur_column(), "_in_lbs$", "_filt_lbs")) / total_project_acres,.names = "{str_replace(.col, '_in_lbs$', '')}_filt_lbs_acre"))
+month_df=month_df %>% 
+  mutate(habseason = case_when(
+    month >= 3 & month <= 7 ~ "HAB",
+    month >= 1 & month <= 2 ~ "Not HAB",
+    month >= 8 & month <= 12 ~ "Not HAB"))
 
+# summarize the proportion of filtration during HAB season or not
 
-annual_df_alt$project_code = annual_df_alt$Project
-lbs_acre_alt = annual_df_alt %>%
-  select(project_code, wateryear, restored_wetland_acres, total_project_acres, tp_filt_lbs_acre, tn_filt_lbs_acre, drp_filt_lbs_acre, nox_filt_lbs_acre, nh3_filt_lbs_acre)
+season_HAB_filt = month_df %>% 
+  group_by(Project,habseason)%>%
+  summarise(tp_filt_lbs = sum(tp_filt_lbs),tn_filt_lbs = sum(tn_filt_lbs),drp_filt_lbs = sum(drp_filt_lbs),nox_filt_lbs = sum(nox_filt_lbs),nh3_filt_lbs = sum(nh3_filt_lbs))
 
-# merge dfs to get lbs/acre base numbers
-lbs_acre_alt = lbs_acre_alt %>%  left_join(runoff_df,   by = c("project_code"))
+season_HAB_filt = season_HAB_filt %>%
+  group_by(Project)%>%
+  mutate(tp_total_season = sum(tp_filt_lbs),tn_total_season = sum(tn_filt_lbs),drp_total_season = sum(drp_filt_lbs),nox_total_season = sum(nox_filt_lbs),nh3_total_season = sum(nh3_filt_lbs))
 
-# calculate lbs/acre for runoff prevention as nutrient runoff lbs / acres converted to agriculture THIS IS ALL THE SAME NUMBER BECAUSE THAT'S HOW WE CALCULATE THIS
-lbs_acre_alt = lbs_acre_alt %>%
-  mutate(tp_runoff_lbs_acre = meanrunoff_P / convertedag, tn_runoff_lbs_acre = meanrunoff_N / convertedag)
+season_HAB_filt = season_HAB_filt %>%
+  mutate(tp_prop_season = tp_filt_lbs / tp_total_season,tn_prop_season = tn_filt_lbs / tn_total_season,drp_prop_season = drp_filt_lbs / drp_total_season,nox_prop_season = nox_filt_lbs/nox_total_season,nh3_prop_season = nh3_filt_lbs/nh3_total_season)
 
-# replace NaN with 0
-lbs_acre_alt <- lbs_acre_alt %>%
-  mutate(across(everything(), ~ ifelse(is.nan(.x), 0, .x)))
+prop_season_HAB_filt = season_HAB_filt %>% 
+  group_by(habseason)%>%
+  summarise(prop_tp_filt = median(tp_prop_season,na.rm=T),prop_tn_filt = median(tn_prop_season,na.rm=T),prop_drp_filt = mean(drp_prop_season,na.rm=T),prop_nox_filt = mean(nox_prop_season,na.rm=T),prop_nh3_filt = mean(nh3_prop_season,na.rm=T))
 
-# Retention lbs/acre: 
-lbs_acre_alt = lbs_acre_alt %>%
-  mutate(tp_retention_lbs_acre = tp_runoff_lbs_acre + tp_filt_lbs_acre, tn_retention_lbs_acre = tn_runoff_lbs_acre + tn_filt_lbs_acre)
+# how much is TP specifically?
+HAB_filt_P = prop_season_HAB_filt %>%  filter(habseason == "HAB") %>%  pull(prop_tp_filt)
 
-
-# select just the variables of interest: 
-lbs_acre_alt = lbs_acre_alt %>% select(project_code, wateryear, restored_wetland_acres, total_project_acres, convertedag, tp_retention_lbs_acre, tn_retention_lbs_acre, tp_filt_lbs_acre, tn_filt_lbs_acre)
-
-# exec summary table with mean for each project
-exec_sum_table_alt <- lbs_acre_alt %>%
-  group_by(project_code) %>%
-  summarise(
-    tp_retention_lbs_acre = mean(tp_retention_lbs_acre, na.rm = TRUE),
-    tn_retention_lbs_acre = mean(tn_retention_lbs_acre, na.rm = TRUE),
-    restored_wetland_acres = first(restored_wetland_acres),
-    total_project_acres = first(total_project_acres),
-    convertedag = first(convertedag))
-
-
-# make a combined table for the exec summary
-
-# subset out 2025
-lbs_acre25_alt <- subset(lbs_acre_alt, wateryear == "2025")
-
-# TP filtration
-tp_filt_all  <- summarize_vals(lbs_acre_alt$tp_filt_lbs_acre)
-tp_filt_2025 <- summarize_vals(lbs_acre25_alt$tp_filt_lbs_acre)
-
-# TN filtration
-tn_filt_all  <- summarize_vals(lbs_acre_alt$tn_filt_lbs_acre)
-tn_filt_2025 <- summarize_vals(lbs_acre25_alt$tn_filt_lbs_acre)
-
-# TP retention
-tp_ret_all  <- summarize_vals(lbs_acre_alt$tp_retention_lbs_acre)
-tp_ret_2025 <- summarize_vals(lbs_acre25_alt$tp_retention_lbs_acre)
-
-# TN retention
-tn_ret_all  <- summarize_vals(lbs_acre_alt$tn_retention_lbs_acre)
-tn_ret_2025 <- summarize_vals(lbs_acre25_alt$tn_retention_lbs_acre)
-
-# put it all together
-exec_sum_table_alt <- data.frame(
-  Row = c("2025 TP", "All Years TP", "2025 TN", "All Years TN"),
-  
-  Filtration_Mean   = round(c(tp_filt_2025$mean, tp_filt_all$mean, tn_filt_2025$mean, tn_filt_all$mean), 0),
-  Filtration_Median = round(c(tp_filt_2025$median, tp_filt_all$median, tn_filt_2025$median, tn_filt_all$median), 0),
-  Filtration_Range  = c(tp_filt_2025$range, tp_filt_all$range, tn_filt_2025$range, tn_filt_all$range),
-
-  Retention_Mean    = round(c(tp_ret_2025$mean, tp_ret_all$mean, tn_ret_2025$mean, tn_ret_all$mean), 0),
-  Retention_Median  = round(c(tp_ret_2025$median, tp_ret_all$median, tn_ret_2025$median, tn_ret_all$median), 0),
-  Retention_Range   = c(tp_ret_2025$range, tp_ret_all$range, tn_ret_2025$range, tn_ret_all$range))
-
-exec_sum_table_alt
 
 ```
+
+Calculate the total TP retention: 
+
+```{r}
+annual_df$project_code = annual_df$Project
+runoff_df$project_code = runoff_df$name
+
+lbs_acre = annual_df %>%
+  select(project_code, wateryear, restored_wetland_acres, total_project_acres, tp_filt_lbs_acre, tn_filt_lbs_acre, drp_filt_lbs_acre, nox_filt_lbs_acre, nh3_filt_lbs_acre)
+
+# add in runoff df
+runoff_df$project_code = runoff_df$name
+runoff_df_sub = runoff_df %>% select(project_code, convertedag, meanrunoff_N, meanrunoff_P)
+
+# merge dfs to get lbs/acre base numbers
+lbs_acre = lbs_acre %>%  left_join(runoff_df_sub,   by = c("project_code"))
+
+# calculate lbs/acre for runoff prevention as nutrient runoff lbs / acres converted to agriculture THIS IS ALL THE SAME NUMBER BECAUSE THAT'S HOW WE CALCULATE THIS
+lbs_acre = lbs_acre %>%  mutate(tp_runoff_lbs_acre = meanrunoff_P / convertedag, tn_runoff_lbs_acre = meanrunoff_N / convertedag)
+
+# replace NaN with 0
+lbs_acre <- lbs_acre %>%  mutate(across(everything(), ~ ifelse(is.nan(.x), 0, .x)))
+
+# Retention lbs/acre: 
+lbs_acre = lbs_acre %>%  mutate(tp_retention_lbs_acre = tp_runoff_lbs_acre + tp_filt_lbs_acre, tn_retention_lbs_acre = tn_runoff_lbs_acre + tn_filt_lbs_acre)
+
+# summary table
+per_50 <- quantile(lbs_acre$tp_retention_lbs_acre, probs = 0.50, na.rm = TRUE) * HAB_filt_P
+per_75 <- quantile(lbs_acre$tp_retention_lbs_acre, probs = 0.77, na.rm = TRUE) * HAB_filt_P
+max_val <- 175 * 0.65 # we're using the maximum for 2024 instead of 2025 to be more realistic with the maximum limit
+
+results_table <- data.frame(
+  Scenario = c("Scenario 1 (50th percentile)","Scenario 2 (75th percentile)",  "Scenario 3 (Maximum)"),
+  TP_Retention = c(per_50, per_75, max_val),
+  Acres_Required = c(200000 / per_50, 200000 / per_75,200000 / max_val))
+
+results_table
+
+```
+
+
 
 
