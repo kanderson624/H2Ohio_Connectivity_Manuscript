@@ -685,7 +685,7 @@ exec_sum_table
 ```
 
 
-### Table 2: Nutrient Retention Summary table
+### Table 2: How many acres of wetands are needed? 
 
 Calculate the percent P retention during the HAB season
 ```{r}
@@ -714,11 +714,12 @@ prop_season_HAB_filt = season_HAB_filt %>%
 
 # how much is TP specifically?
 HAB_filt_P = prop_season_HAB_filt %>%  filter(habseason == "HAB") %>%  pull(prop_tp_filt)
+HAB_filt_N = prop_season_HAB_filt %>%  filter(habseason == "HAB") %>%  pull(prop_tn_filt)
 
 
 ```
 
-Calculate the total TP retention: 
+Calculate the acres needed to meet TP retention goals: 
 
 ```{r}
 annual_df$project_code = annual_df$Project
@@ -748,6 +749,7 @@ per_50 <- quantile(lbs_acre$tp_retention_lbs_acre, probs = 0.50, na.rm = TRUE) *
 per_75 <- quantile(lbs_acre$tp_retention_lbs_acre, probs = 0.77, na.rm = TRUE) * HAB_filt_P
 max_val <- 175 * 0.65 # we're using the maximum for 2024 instead of 2025 to be more realistic with the maximum limit
 
+# calculate acreage needed using 200,000 lbs P as the goal from enhance non-point source sinks goal in Maumee TMDL
 results_table <- data.frame(
   Scenario = c("Scenario 1 (50th percentile)","Scenario 2 (75th percentile)",  "Scenario 3 (Maximum)"),
   TP_Retention = c(per_50, per_75, max_val),
@@ -757,6 +759,41 @@ results_table
 
 ```
 
+Calculate the acres needed to meet TN retention goals: 
 
+```{r}
+# Start with 2008 baseline TN (to match 2008 baseline TP used for calculation of TMDL P goals)
+TNload2008 = 44275436
+# 40% reduction as suggested by Paerl et al. 2024
+TNload_reduction = TNload2008 * 0.4 
+# calculate proportion of reduction proposed for wetlands for TP in TMDL
+wetland_prop_red = 92 / 442 
+# calculate wetland TN goal as the proportion of the TP reduction attributed to the TP goal * the TN goal
+TN_reduction_goal = wetland_prop_red * TNload_reduction
 
+# summary table
+per_50 <- quantile(lbs_acre$tn_retention_lbs_acre, probs = 0.50, na.rm = TRUE) * HAB_filt_N
+per_75 <- quantile(lbs_acre$tn_retention_lbs_acre, probs = 0.77, na.rm = TRUE) * HAB_filt_N
+max_val <- max(lbs_acre$tn_retention_lbs_acre) * 0.65 # we're using the maximum for 2024 instead of 2025 to be more realistic with the maximum limit
 
+results_table <- data.frame(
+  Scenario = c("Scenario 1 (50th percentile)","Scenario 2 (75th percentile)",  "Scenario 3 (Maximum)"),
+  TN_Retention = c(per_50, per_75, max_val),
+  Acres_Required = c(TN_reduction_goal / per_50, TN_reduction_goal / per_75,TN_reduction_goal / max_val))
+
+results_table
+
+```
+
+Quick Summary stats about % ag conversion to meet goals: 
+
+```{r}
+# Maumee drainage area in Ohio (https://epa.ohio.gov/divisions-and-offices/surface-water/reports-data/maumee-river-watershed):
+Maumee_acres = 3215360
+# percent ag in Maumee (https://dam.assets.ohio.gov/image/upload/epa.ohio.gov/Portals/35/tmdl/MaumeeInfographic.pdf):
+Maumee_percent_ag = 0.8
+# Maumee agricultural acres: 
+Maumee_ag_acres = Maumee_acres * Maumee_percent_ag
+
+40000/Maumee_ag_acres
+```
