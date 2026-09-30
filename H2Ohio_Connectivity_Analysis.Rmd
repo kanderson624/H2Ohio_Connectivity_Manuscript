@@ -32,6 +32,9 @@ library(maptiles)   # for basemaps (e.g., Stamen Terrain)
 library(ggrepel)    # for improved label placement in maps
 library(magick)     # for image manipulation (e.g., adding logos to maps)
 library(tigris)     # for Ohio boundary
+library(lme4)       # run LME models
+library(MuMIn)      # get R2 values for LMEs
+library(lmerTest)   # get p values for LMEs
 ```
 
 ## Load in Data
@@ -193,6 +196,20 @@ month_df_tp_rel <- month_df %>% filter(tp_filt_lbs < 0) %>% mutate(tp_filt_lbs =
 month_df_tn_filt <- month_df %>% filter(tn_filt_lbs >= 0) # separate out filtration (positive values)
 month_df_tn_rel <- month_df %>%  filter(tn_filt_lbs < 0) %>% mutate(tn_filt_lbs = abs(tn_filt_lbs)) # separate out release (negative values) and take absolute value
 
+# setup model data: Calculate log and then filter out NAs and -infs
+tp_filt_df <- month_df_tp_filt %>% mutate(logtpfilt = log(tp_filt_lbs)) %>% filter(is.finite(logtpfilt)) %>% filter(is.finite(loginflow))
+tp_rel_df <- month_df_tp_rel %>% mutate(logtpfilt = log(tp_filt_lbs)) %>% filter(is.finite(logtpfilt)) %>% filter(is.finite(loginflow))
+tn_filt_df <- month_df_tn_filt %>% mutate(logtnfilt = log(tn_filt_lbs)) %>% filter(is.finite(logtnfilt)) %>% filter(is.finite(loginflow))
+tn_rel_df <- month_df_tn_rel %>% mutate(logtnfilt = log(tn_filt_lbs)) %>% filter(is.finite(logtnfilt)) %>% filter(is.finite(loginflow))
+
+# run LMEs
+lmetpfilt <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_filt_df)
+lmetprel <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_rel_df)
+lmetpconc <- lmer(logtpfilt ~ tp_in_mgL + (1 | Project), data = tp_filt_df)
+lmetnfilt <- lmer(logtnfilt ~ loginflow + (1 | Project), data = tn_filt_df)
+lmetnrel <- lmer(logtnfilt ~ loginflow + (1 | Project), data = tn_rel_df)
+lmetnconc <- lmer(logtnfilt ~ tn_in_mgL + (1 | Project), data = tn_filt_df)
+
 # Make functions
 log_minor_breaks <- function(lims) {
   min_exp <- floor(log10(lims[1]))
@@ -208,8 +225,14 @@ label_log_clean <- function(x) {
       return(scales::comma(val, accuracy = 1))}  
     "" })}
 
-# set up plot styles 
+# Function to extract lme stats
+lme_stats <- function(model, predictor) {
+  pval <- coef(summary(model))[predictor, "Pr(>|t|)"][1]
+  r2 <- MuMIn::r.squaredGLMM(model)
+  r2m <- r2[1, "R2m"]
+  paste0("R² = ", sprintf("%.3f", r2m), ", p ", format.pval(pval, digits = 3, eps = 0.001))}
 
+# set up plot styles 
 log_x_scale <- scale_x_log10(name = expression(bold("Inflow volume (m"^3*")")), limits = c(1, 1e6), 
   breaks = c(1, 10^(-10:10)), minor_breaks = log_minor_breaks, labels = label_log_clean)
 
@@ -224,25 +247,29 @@ cor_layer <- stat_cor(method = "pearson", aes(label = paste(..rr.label.., ..p.la
   label.x.npc = 0, label.y.npc = 1, p.accuracy = 0.001)
 
 # Make functions for creating plots
-plot_volume <- function(data, yvar, ylab) {
+plot_volume <- function(data, yvar, ylab, model) {
+  label <- lme_stats(model)
   ggplot(data, aes(x = inflow_volume_m3, y = .data[[yvar]])) +
     geom_point() + geom_smooth(method = lm, color = "black") + log_x_scale +
-    log_y_scale + labs(y = ylab) + annotation_logticks(sides = "bl") + cor_layer + base_theme}
+    log_y_scale + labs(y = ylab) + annotation_logticks(sides = "bl") + base_theme +
+    annotate("text", x = 1, y = 600, label = label, hjust = -0.1, vjust = 1.1, size = 4)}
 
-plot_concentration <- function(data, xvar, yvar, xlab, ylab, smooth = FALSE) {
-  p <- ggplot(data, aes( x = .data[[xvar]], y = .data[[yvar]])) +
+plot_concentration <- function(data, xvar, yvar, xlab, ylab, model, smooth = FALSE) {
+   label <- lme_stats(model)
+   p <- ggplot(data, aes( x = .data[[xvar]], y = .data[[yvar]])) +
     geom_point()
   if (smooth) {p <- p + geom_smooth(method = lm, color = "black")}
-  p + log_y_scale + labs(x = xlab, y = ylab) + annotation_logticks(sides = "l") + cor_layer + theme_bw() +
-    theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12))}
+  p + log_y_scale + labs(x = xlab, y = ylab) + annotation_logticks(sides = "l") + theme_bw() +
+    theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12)) +
+    annotate("text", x = 0, y = 600, label = label, hjust = -0.1, vjust = 1.1, size = 4)}
 
 # Make Plots
-p1 <- plot_volume(month_df_tp_filt, "tp_filt_lbs", "Total Phosphorus Retention (lbs.)")
-p2 <- plot_volume(month_df_tp_rel, "tp_filt_lbs", "Total Phosphorus Release (lbs.)")
-p3 <- plot_concentration(month_df,"tp_in_mgL","tp_filt_lbs","Total Phosphorus concentration\n(mg/L) at Inflow", "Total Phosphorus Retention (lbs.)")
-p4 <- plot_volume(month_df_tn_filt, "tn_filt_lbs","Total Nitrogen Retention (lbs.)")
-p5 <- plot_volume(month_df_tn_rel,"tn_filt_lbs","Total Nitrogen Release (lbs.)")
-p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen concentration\n(mg/L) at Inflow", "Total Nitrogen Retention (lbs.)", smooth = TRUE)
+p1 <- plot_volume(month_df_tp_filt, "tp_filt_lbs", "Total Phosphorus Retention (lbs.)", lmetpfilt)
+p2 <- plot_volume(month_df_tp_rel, "tp_filt_lbs", "Total Phosphorus Release (lbs.)", lmetprel)
+p3 <- plot_concentration(month_df,"tp_in_mgL","tp_filt_lbs","Total Phosphorus concentration\n(mg/L) at Inflow", "Total Phosphorus Retention (lbs.)",lmetpconc)
+p4 <- plot_volume(month_df_tn_filt, "tn_filt_lbs","Total Nitrogen Retention (lbs.)", lmetnfilt)
+p5 <- plot_volume(month_df_tn_rel,"tn_filt_lbs","Total Nitrogen Release (lbs.)", lmetnrel)
+p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen concentration\n(mg/L) at Inflow", "Total Nitrogen Retention (lbs.)", lmetpconc)
 
 # Combine into final figure
 fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
@@ -364,6 +391,39 @@ drp_plots <- loo_plots(drp_results, "DRP")
 nox_plots <- loo_plots(nox_results, "NOx")
 nh3_plots <- loo_plots(nh3_results, "NH3")
 ```
+### LME models
+
+```{r}
+# remove NA values from df
+tp_filt_df <- month_df_tp_filt %>%
+filter(is.finite(logtpfilt))
+
+lmetpfilt <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_filt_df)
+summary(lmetpfilt)
+r.squaredGLMM(lmetpfilt)
+
+# Load necessary package
+library(lattice)
+# Plot random effects
+dotplot(ranef(lmetpfilt, condVar=TRUE))
+
+
+
+# TP release
+month_df_tp_rel <- month_df_tp_rel %>% mutate(logtpfilt = log(tp_filt_lbs))
+# filter out NAs and -infs
+tp_rel_df <- month_df_tp_rel %>% filter(is.finite(logtpfilt)) %>% filter(is.finite(loginflow))
+
+
+
+lmetprel <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_rel_df)
+summary(lmetprel)
+r.squaredGLMM(lmetprel)
+
+
+```
+
+
 ### Figure S1. LOO analysis
 ```{r}
 figure_s1_alt <- ((tp_plots$model + tp_plots$removed) /
