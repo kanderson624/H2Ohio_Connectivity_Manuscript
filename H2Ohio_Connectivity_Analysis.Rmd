@@ -252,7 +252,7 @@ plot_volume <- function(data, yvar, ylab, model) {
   ggplot(data, aes(x = inflow_volume_m3, y = .data[[yvar]])) +
     geom_point() + geom_smooth(method = lm, color = "black") + log_x_scale +
     log_y_scale + labs(y = ylab) + annotation_logticks(sides = "bl") + base_theme +
-    annotate("text", x = 1, y = 600, label = label, hjust = -0.1, vjust = 1.1, size = 4)}
+    annotate("label", x = 1, y = 600, label = label, hjust = -0.1, vjust = 1.1, size = 4, fill = "white", color = "black")}
 
 plot_concentration <- function(data, xvar, yvar, xlab, ylab, model, smooth = FALSE) {
    label <- lme_stats(model)
@@ -261,7 +261,7 @@ plot_concentration <- function(data, xvar, yvar, xlab, ylab, model, smooth = FAL
   if (smooth) {p <- p + geom_smooth(method = lm, color = "black")}
   p + log_y_scale + labs(x = xlab, y = ylab) + annotation_logticks(sides = "l") + theme_bw() +
     theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12)) +
-    annotate("text", x = 0, y = 600, label = label, hjust = -0.1, vjust = 1.1, size = 4)}
+    annotate("label", x = 0, y = 600, label = label, hjust = -0.1, vjust = 1.1, size = 4, fill = "white", color = "black")}
 
 # Make Plots
 p1 <- plot_volume(month_df_tp_filt, "tp_filt_lbs", "Total Phosphorus Retention (lbs.)", lmetpfilt)
@@ -298,7 +298,8 @@ run_loo <- function(df, response_var, predictor_var = "loginflow") {
   loo.rmsesub <- rep(NA, length(projects))
   loo.rmseout <- rep(NA, length(projects))
   loo.adr2 <- rep(NA, length(projects))
-
+  loo.median <- rep(NA, length(projects))
+  
   # Build model formula dynamically
   model_formula <- as.formula(
     paste(response_var, "~", predictor_var)
@@ -322,7 +323,8 @@ run_loo <- function(df, response_var, predictor_var = "loginflow") {
     )
 
     loo.adr2[i] <- summary(loo_mod)$adj.r.squared
-
+    loo.median[i] <- median(outdata[[response_var]], na.rm = TRUE)
+                            
     print(
       paste(
         "Step", i,
@@ -337,6 +339,8 @@ run_loo <- function(df, response_var, predictor_var = "loginflow") {
   results <- data.frame(
     project = projects,
     response = response_var,
+    median_removed = loo.median,
+    median_all = median(loo_df[[response_var]], na.rm = TRUE),
     rmse_model = loo.rmsesub,
     rmse_removed = loo.rmseout,
     adj_r2 = loo.adr2
@@ -351,6 +355,17 @@ tn_results <- run_loo(month_df_tn_filt, "logtnfilt")
 drp_results <- run_loo(month_df_drp_filt, "logdrpfilt")
 nox_results <- run_loo(month_df_nox_filt, "lognoxfilt")
 nh3_results <- run_loo(month_df_nh3_filt, "lognh3filt")
+
+# calculate the % RMSE compared to the median value 
+# TO ASK DAVE: SHOULD I DO MEDIAN FOR ALL WETLANDS OR JUST REMOVED WETLAND?
+# does percent accurately describe the variance here... It's not a linear relationship between error and the median... there's more error with lower numbers. Want to account for that. The error is accurately ~ 3 lbs, more accurate at higher retention values than lower 
+tp_results <- tp_results %>% 
+  mutate(rmse_percent_all = (10^rmse_model) / (10^median_all))%>%
+  mutate(rmse_percent_remove = (10^rmse_removed) / (10^median_all))%>%
+  mutate(rmse_model_unlog = 10^rmse_model)%>%  
+  mutate(rmse_removed_unlog = 10^rmse_removed)
+
+
 
 # un-log to get the RMSE for each variation for both the version with the full data included and removed
 10^mean(tp_results$rmse_model)
@@ -390,37 +405,6 @@ tn_plots  <- loo_plots(tn_results,  "TN")
 drp_plots <- loo_plots(drp_results, "DRP")
 nox_plots <- loo_plots(nox_results, "NOx")
 nh3_plots <- loo_plots(nh3_results, "NH3")
-```
-### LME models
-
-```{r}
-# remove NA values from df
-tp_filt_df <- month_df_tp_filt %>%
-filter(is.finite(logtpfilt))
-
-lmetpfilt <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_filt_df)
-summary(lmetpfilt)
-r.squaredGLMM(lmetpfilt)
-
-# Load necessary package
-library(lattice)
-# Plot random effects
-dotplot(ranef(lmetpfilt, condVar=TRUE))
-
-
-
-# TP release
-month_df_tp_rel <- month_df_tp_rel %>% mutate(logtpfilt = log(tp_filt_lbs))
-# filter out NAs and -infs
-tp_rel_df <- month_df_tp_rel %>% filter(is.finite(logtpfilt)) %>% filter(is.finite(loginflow))
-
-
-
-lmetprel <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_rel_df)
-summary(lmetprel)
-r.squaredGLMM(lmetprel)
-
-
 ```
 
 
@@ -471,8 +455,9 @@ season_colors <- c(
   Fall   = "#882D17")
 
 # define plots: 
-
+projects = unique(month_df_tp_filt$Project)
 make_plot <- function(data, yvar, title) {
+  data <- data %>% mutate(Project = factor(Project, levels = projects))
   ggplot(data,aes(x = Project, y = .data[[yvar]], fill = season)) +
     geom_bar(stat = "identity", position = "fill") +
     scale_x_discrete(drop = FALSE) +
