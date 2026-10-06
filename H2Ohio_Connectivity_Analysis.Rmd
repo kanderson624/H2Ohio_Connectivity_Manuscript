@@ -35,6 +35,9 @@ library(tigris)     # for Ohio boundary
 library(lme4)       # run LME models
 library(MuMIn)      # get R2 values for LMEs
 library(lmerTest)   # get p values for LMEs
+library(emmeans)    # to run ANCOVA and make plots
+library(HH)
+library(Hmisc)
 ```
 
 ## Load in Data
@@ -272,7 +275,8 @@ p5 <- plot_volume(month_df_tn_rel,"tn_filt_lbs","Total Nitrogen Release (lbs.)",
 p6 <- plot_concentration(month_df,"tn_in_mgL","tn_filt_lbs","Total Nitrogen concentration\n(mg/L) at Inflow", "Total Nitrogen Retention (lbs.)", lmetpconc)
 
 # Combine into final figure
-fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6)
+fig_2 <- (p1 | p2 | p3) / (p4 | p5 | p6) + plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 16, face = "bold"), plot.tag.position = c(0, 1), plot.margin = margin(20, 20, 20, 20))
 ```
 
 #### Leave one out analysis
@@ -301,9 +305,12 @@ run_loo <- function(df, response_var, predictor_var = "loginflow") {
   loo.median <- rep(NA, length(projects))
   
   # Build model formula dynamically
-  model_formula <- as.formula(
-    paste(response_var, "~", predictor_var)
-  )
+  model_formula <- as.formula(paste(response_var, "~", predictor_var))
+  
+  # calculate RMSE for the base model
+  base_mod <- lm(model_formula, data = loo_df)
+  base_rmse <- rmse(loo_df[[response_var]],predict(base_mod, newdata = loo_df))
+
 
   for(i in seq_along(projects)) {
 
@@ -337,14 +344,15 @@ run_loo <- function(df, response_var, predictor_var = "loginflow") {
   }
 
   results <- data.frame(
-    project = projects,
-    response = response_var,
-    median_removed = loo.median,
-    median_all = median(loo_df[[response_var]], na.rm = TRUE),
-    rmse_model = loo.rmsesub,
-    rmse_removed = loo.rmseout,
-    adj_r2 = loo.adr2
-  )
+  project = projects,
+  response = response_var,
+  median_removed = loo.median,
+  median_all = median(loo_df[[response_var]], na.rm = TRUE),
+  rmse_model = loo.rmsesub,
+  rmse_removed = loo.rmseout,
+  adj_r2 = loo.adr2,
+  base_rmse = base_rmse
+)
 
   return(results)
 }
@@ -367,10 +375,11 @@ tp_results <- tp_results %>%
 
 
 
-# un-log to get the RMSE for each variation for both the version with the full data included and removed
-10^mean(tp_results$rmse_model)
-10^mean(tp_results$rmse_removed)
-10^mean(tn_results$rmse_model)
+# Calculate median and mean RMSE for each variable
+mean(tp_results$rmse_model)
+median(tp_results$rmse_model)
+mean(tn_results$rmse_model)
+median(tn_results$rmse_model)
 10^mean(tn_results$rmse_removed)
 10^mean(drp_results$rmse_model)
 10^mean(drp_results$rmse_removed)
@@ -384,7 +393,7 @@ tp_results <- tp_results %>%
 loo_plots <- function(results, nutrient) {
 
   p_model <- ggplot(results, aes(x = project, y = rmse_model)) +
-    geom_bar(stat = "identity") +
+    geom_bar(stat = "identity") + geom_hline(yintercept = unique(results$base_rmse), linewidth = 1) +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90)) +
     ylab(paste("RMSE of model with site removed (log", nutrient, "Retention (lbs))")) +
@@ -400,6 +409,7 @@ loo_plots <- function(results, nutrient) {
   list(model = p_model, removed = p_removed)
 }
 
+# calculate the RMSE of the full model: 
 tp_plots  <- loo_plots(tp_results,  "TP")
 tn_plots  <- loo_plots(tn_results,  "TN")
 drp_plots <- loo_plots(drp_results, "DRP")
@@ -417,8 +427,8 @@ figure_s1_alt <- ((tp_plots$model + tp_plots$removed) /
  (nh3_plots$model + nh3_plots$removed)) +
   plot_annotation(title = "Leave-One-Site-Out RMSE Results", subtitle = "Model RMSE and Removed Site RMSE by Nutrient")
 
-figure_s1 <- ((tp_plots$model + tp_plots$removed) /
- (tn_plots$model + tn_plots$removed))
+figure_s1 <- ((tp_plots$model + tp_plots$removed) / (tn_plots$model + tn_plots$removed))+ plot_annotation(tag_levels = "A") & 
+  theme(plot.tag = element_text(size = 16, face = "bold"), plot.tag.position = c(0, 1), plot.margin = margin(20, 20, 20, 20))
 
 
 
@@ -475,12 +485,49 @@ p3 <- make_plot(month_df_tn_filt, "tn_filt_lbs", "Proportion of Nitrogen Filtrat
 p4 <- make_plot(month_df_tn_rel, "tn_filt_lbs", "Proportion of Nitrogen Release")
 
 # Combine together
-fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
+fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") + plot_annotation(tag_levels = "A") & 
+  theme(legend.position = "right", plot.tag = element_text(size = 16, face = "bold"), plot.tag.position = c(0, 1), plot.margin = margin(20, 20, 20, 20))
 fig_3
 ```
 
 ### Figure 4: When concentration does matter
 
+
+#### ANCOVA Approach
+
+ANCOVA to map out where concentration matters! 
+
+```{r}
+a1 <- aov(logtpfilt ~ (logtpinmgL + loginflow) * Project, data = tp_filt_df)
+a2 <- aov(logtpfilt ~ (loginflow + logtpinmgL) * Project, data = tp_filt_df)
+a3 <- aov(logtpfilt ~ (loginflow + logtpinmgL) + Project, data = tp_filt_df)
+summary(a1)
+summary(a2)
+summary(a3)
+
+
+
+AIC(a1,a2,a3)
+
+# get slopes for each project: 
+tpin_slopes <- emtrends(a2, ~ Project, var = "logtpinmgL") %>%
+as.data.frame() %>% mutate(Predictor = "logtpinmgL", slope = logtpinmgL.trend)
+flow_slopes <- emtrends(a2, ~ Project, var = "loginflow") %>%
+as.data.frame() %>% mutate(Predictor = "loginflow", slope = loginflow.trend)
+# combine slope dfs
+slope_df2 <- bind_rows(tpin_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL), flow_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL))
+
+# plot them together: 
+pslopes = ggplot(slope_df, aes(x = slope, y = Project, color = Predictor)) +
+geom_point(position = position_dodge(width = 0.5), size = 4,shape =18)+
+scale_color_manual(values = c("loginflow" = "black","logtpinmgL" = "gray"),labels = c("loginflow" = "log(inflow)","logtpinmgL" = "log(TP concentration mg/L)")) +geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+geom_errorbarh(aes(xmin = lower.CL, xmax = upper.CL), position = position_dodge(width = 0.5), height = 0.2) +
+theme_bw() +labs(x = "Slope Estimate", y = "", color = "Predictor") + xlim(-9,9)+ scale_y_discrete(limits = rev)
+pslopes
+```
+
+
+#### Original approach
 Start with modelling this out. We're going to run a model for each project individually of retention ~ volume + concentration and see which is more important for each one. 
 
 ```{r}
@@ -540,19 +587,19 @@ nh3_stats_long$abs_t_value = abs(nh3_stats_long$t_value)
 # make the plot
 p1 <- ggplot(tp_stats_long, aes(Project, variable, fill = abs_t_value)) +
   geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
-    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Total Phosphorus")
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")
 p2 <- ggplot(tn_stats_long, aes(Project, variable, fill = abs_t_value)) +
   geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
-    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Total Nitrogen")
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")
 p3 <- ggplot(drp_stats_long, aes(Project, variable, fill = abs_t_value)) +
   geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
-    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Dissolved Reactive Phosphorus")
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")
 p4 <- ggplot(nox_stats_long, aes(Project, variable, fill = abs_t_value)) +
   geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
-    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("NoX")
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")
 p5 <- ggplot(nh3_stats_long, aes(Project, variable, fill = abs_t_value)) +
   geom_tile() + coord_equal() + scale_fill_gradientn(colours = c("white", "gray40", "black"), trans = "log10",
-    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")+ggtitle("Ammonium")
+    limits = c(1, 150), oob = scales::squish, breaks = c(1, 10, 150), name = "t value") +  theme_bw()+ylab("")+xlab("")
 
 fig_4 = (p1 / p2) + plot_layout(heights = 1, guides = "collect") & theme(legend.position = "right")
 fig_4
@@ -586,12 +633,14 @@ summary(m2)
 # make a db of predictions and then plot it using ggeffects
 vals <- seq(0, 2, by = 0.1) # tell it how many points you want a prediction for
 pred <- ggpredict(m1, terms = paste0("tp_in_mgL [",paste(vals, collapse = ","),"]")) # make the predictions
-p1 = ggplot(pred, aes(x = x, y = predicted)) + geom_line(linewidth = 1.2, color = "black") + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +
-  labs(x = "TP In (mg/L)", y = "Predicted Probability of Release", title = "Predicted Probability of TP Release vs TP In") + theme_bw()
+p1 = ggplot(pred, aes(x = x, y = predicted)) + geom_line(linewidth = 1.2, color = "black") + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +  labs(x = "Total Phosphorus concentration\n(mg/L) at Inflow", y = "Predicted Probability of Release") + theme_bw()+
+    theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12)) 
+
 vals <- seq(0, 15, by = 1) # tell it how many points you want a prediction for
 pred <- ggpredict(m2, terms = paste0("tn_in_mgL [",paste(vals, collapse = ","),"]"))
-p2 = ggplot(pred, aes(x = x, y = predicted)) + geom_line(linewidth = 1.2, color = "black") + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +
-  labs(x = "TN In (mg/L)", y = "Predicted Probability of Release", title = "Predicted Probability of TN Release vs TN In") + theme_bw()
+
+p2 = ggplot(pred, aes(x = x, y = predicted)) + geom_line(linewidth = 1.2, color = "black") + geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +  labs(x = "Total Nitrogen concentration\n(mg/L) at Inflow", y = "Predicted Probability of Release") + theme_bw()+
+    theme(axis.title = element_text(size = 14, face = "bold"), axis.text = element_text(size = 12)) 
 fig_5 = p1 + p2
 fig_5
 ```
