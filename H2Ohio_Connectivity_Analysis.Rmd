@@ -61,6 +61,7 @@ Get some summary stats on wetland hydrology
 ```{r}
 loi_df = read.csv("Data/locations_of_interest_20260317.csv")
 char_df = read.csv("Data/project character_20251119.csv")
+drain_df = read.csv("Data/h2ohio_proj_codes_cover.csv")
 
 # List all projects that have budgets
 project_list <- unique(c(annual_df$Project, "MERW")) # add on MERW so we also capture values that don't list the three sub-projects individually
@@ -131,7 +132,7 @@ annual_df %>% summarise(mean_tn_lbs = mean(tn_filt_lbs), sd_tn_lbs = sd(tn_filt_
 loi_budgets_unique <- loi_df_budgets %>%
   distinct(project_code, .keep_all = TRUE) %>%
   mutate(loi_lon = sub("^--", "-", loi_lon)) %>% # take out weird double -
-  select(project_code, loi_lat, loi_lon)
+  dplyr::select(project_code, loi_lat, loi_lon)
 
 loi_budgets_unique$loi_lon = as.numeric(loi_budgets_unique$loi_lon)
 
@@ -204,6 +205,10 @@ tp_filt_df <- month_df_tp_filt %>% mutate(logtpfilt = log(tp_filt_lbs)) %>% filt
 tp_rel_df <- month_df_tp_rel %>% mutate(logtpfilt = log(tp_filt_lbs)) %>% filter(is.finite(logtpfilt)) %>% filter(is.finite(loginflow))
 tn_filt_df <- month_df_tn_filt %>% mutate(logtnfilt = log(tn_filt_lbs)) %>% filter(is.finite(logtnfilt)) %>% filter(is.finite(loginflow))
 tn_rel_df <- month_df_tn_rel %>% mutate(logtnfilt = log(tn_filt_lbs)) %>% filter(is.finite(logtnfilt)) %>% filter(is.finite(loginflow))
+
+drp_filt_df <- month_df_drp_filt %>% mutate(logtpfilt = log(drp_filt_lbs)) %>% filter(is.finite(logdrpfilt)) %>% filter(is.finite(loginflow))
+nox_filt_df <- month_df_nox_filt %>% mutate(logtpfilt = log(nox_filt_lbs)) %>% filter(is.finite(lognoxfilt)) %>% filter(is.finite(loginflow))
+nh3_filt_df <- month_df_nh3_filt %>% mutate(logtpfilt = log(nh3_filt_lbs)) %>% filter(is.finite(lognh3filt)) %>% filter(is.finite(loginflow))
 
 # run LMEs
 lmetpfilt <- lmer(logtpfilt ~ loginflow + (1 | Project), data = tp_filt_df)
@@ -486,7 +491,7 @@ p4 <- make_plot(month_df_tn_rel, "tn_filt_lbs", "Proportion of Nitrogen Release"
 
 # Combine together
 fig_3 = (p1 / p2 / p3 / p4) + plot_layout(heights = 1, guides = "collect") + plot_annotation(tag_levels = "A") & 
-  theme(legend.position = "right", plot.tag = element_text(size = 16, face = "bold"), plot.tag.position = c(0, 1), plot.margin = margin(20, 20, 20, 20))
+  theme(legend.position = "right", plot.tag = element_text(size = 16, face = "bold"), plot.tag.position = c(0, 1))
 fig_3
 ```
 
@@ -498,32 +503,76 @@ fig_3
 ANCOVA to map out where concentration matters! 
 
 ```{r}
-a1 <- aov(logtpfilt ~ (logtpinmgL + loginflow) * Project, data = tp_filt_df)
-a2 <- aov(logtpfilt ~ (loginflow + logtpinmgL) * Project, data = tp_filt_df)
+# calculate log concentration
+tp_filt_df = tp_filt_df %>% mutate(logtpinmgL = log(tp_in_mgL))
+tn_filt_df = tn_filt_df %>% mutate(logtninmgL = log(tn_in_mgL))
+
+
+a1 <- aov(logtpfilt ~ (logtpinmgL +  loginflow) * Project, data = tp_filt_df)
+atp <- aov(logtpfilt ~ (logtpinmgL + loginflow) * Project, data = tp_filt_df)
 a3 <- aov(logtpfilt ~ (loginflow + logtpinmgL) + Project, data = tp_filt_df)
 summary(a1)
-summary(a2)
-summary(a3)
+summary(atp)
+summary(an)
+AIC(a1,atp,a3)
 
-
-
-AIC(a1,a2,a3)
 
 # get slopes for each project: 
-tpin_slopes <- emtrends(a2, ~ Project, var = "logtpinmgL") %>%
+tpin_slopes <- emtrends(atp, ~ Project, var = "logtpinmgL") %>%
 as.data.frame() %>% mutate(Predictor = "logtpinmgL", slope = logtpinmgL.trend)
-flow_slopes <- emtrends(a2, ~ Project, var = "loginflow") %>%
+flow_slopes <- emtrends(atp, ~ Project, var = "loginflow") %>%
 as.data.frame() %>% mutate(Predictor = "loginflow", slope = loginflow.trend)
 # combine slope dfs
-slope_df2 <- bind_rows(tpin_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL), flow_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL))
+slope_df <- bind_rows(tpin_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL), flow_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL))
 
 # plot them together: 
 pslopes = ggplot(slope_df, aes(x = slope, y = Project, color = Predictor)) +
 geom_point(position = position_dodge(width = 0.5), size = 4,shape =18)+
-scale_color_manual(values = c("loginflow" = "black","logtpinmgL" = "gray"),labels = c("loginflow" = "log(inflow)","logtpinmgL" = "log(TP concentration mg/L)")) +geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+scale_color_manual(values = c("loginflow" = "black","logtpinmgL" = "gray"),labels = c("loginflow" = "log(inflow m^3)","logtpinmgL" = "log(TP concentration mg/L)")) +geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
 geom_errorbarh(aes(xmin = lower.CL, xmax = upper.CL), position = position_dodge(width = 0.5), height = 0.2) +
-theme_bw() +labs(x = "Slope Estimate", y = "", color = "Predictor") + xlim(-9,9)+ scale_y_discrete(limits = rev)
-pslopes
+theme_bw() +labs(x = "Slope Estimate", y = "", color = "Predictor") + xlim(-9,9)+ scale_y_discrete(limits = rev)+ 
+  theme(legend.position = c(0.02, 0.98),  legend.justification = c(0, 1), legend.background = element_rect(fill = "white", color = "black"))
+
+### Same thing for TN
+an <- aov(logtpfilt ~ (logtninmgL + loginflow) * Project, data = tn_filt_df)
+# get slopes for each project: 
+tnin_slopes <- emtrends(an, ~ Project, var = "logtninmgL") %>%
+as.data.frame() %>% mutate(Predictor = "logtninmgL", slope = logtninmgL.trend)
+flow_slopes <- emtrends(an, ~ Project, var = "loginflow") %>%
+as.data.frame() %>% mutate(Predictor = "loginflow", slope = loginflow.trend)
+# combine slope dfs
+slope_df <- bind_rows(tnin_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL), flow_slopes %>% dplyr::select(Project, Predictor, slope, SE, lower.CL, upper.CL))
+
+# plot them together: 
+nslopes = ggplot(slope_df, aes(x = slope, y = Project, color = Predictor)) +
+geom_point(position = position_dodge(width = 0.5), size = 4,shape =18) +
+scale_color_manual(values = c("loginflow" = "black","logtninmgL" = "gray"),labels = c("loginflow" = "log(inflow m^3)","logtninmgL" = "log(TN concentration mg/L)")) +geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+geom_errorbarh(aes(xmin = lower.CL, xmax = upper.CL), position = position_dodge(width = 0.5), height = 0.2) +
+theme_bw() +labs(x = "Slope Estimate", y = "", color = "Predictor") + xlim(-9,9)+ scale_y_discrete(limits = rev)+ 
+  theme(legend.position = c(0.02, 0.98),  legend.justification = c(0, 1), legend.background = element_rect(fill = "white", color = "black"))
+
+fig_4 = (pslopes | nslopes)
+fig_4
+
+```
+
+```{r}
+# ANCOVA summary stats for dissolved nutrients 
+drp_filt_df = drp_filt_df %>% mutate(logdrpinmgL = log(drp_in_mgL))
+nox_filt_df = nox_filt_df %>% mutate(lognoxinmgL = log(nox_in_mgL))
+nh3_filt_df = nh3_filt_df %>% mutate(lognh3inmgL = log(nh3_in_mgL))
+
+adrp <- aov(logdrpfilt ~ (logdrpinmgL + loginflow) * Project, data = drp_filt_df)
+anox <- aov(lognoxfilt ~ (lognoxinmgL + loginflow) * Project, data = nox_filt_df)
+anh3 <- aov(lognh3filt ~ (lognh3inmgL + loginflow) * Project, data = nh3_filt_df)
+
+
+
+summary(atp)
+summary(an)
+summary(adrp)
+summary(anox)
+summary(anh3)
 ```
 
 
@@ -890,4 +939,16 @@ Maumee_percent_ag = 0.8
 Maumee_ag_acres = Maumee_acres * Maumee_percent_ag
 
 40000/Maumee_ag_acres
+```
+
+
+### Table S1: Project stats 
+
+```{r}
+# subset out projects with budgets from char_df
+drain_df_budgets <- drain_df %>%  filter(project_code %in% project_list) %>%  distinct(project_code, .keep_all = TRUE) # keep only the first row for each value
+drain_df_budgets = drain_df_budgets %>% dplyr::select(project_code, pct_urban, pct_forest, pct_agriculture)
+
+char_df_budgets
+
 ```
